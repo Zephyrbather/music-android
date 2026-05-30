@@ -1,0 +1,410 @@
+package com.musicplayer.app.ui.playlists
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.Merge
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.musicplayer.app.domain.model.Playlist
+import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.ui.components.PlaylistCard
+import com.musicplayer.app.ui.components.SongListItem
+import com.musicplayer.app.ui.i18n.LocalStrings
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PlaylistsScreen(
+    onOpenPlaylist: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: PlaylistsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val rankingPeriod by viewModel.rankingPeriod.collectAsStateWithLifecycle()
+    val rankedSongs by viewModel.rankedSongs.collectAsStateWithLifecycle()
+    val strings = LocalStrings.current
+
+    var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<Playlist?>(null) }
+    var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
+    var mergeTarget by remember { mutableStateOf<Playlist?>(null) }
+    var contextPlaylist by remember { mutableStateOf<Playlist?>(null) }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, top = 8.dp, end = 12.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = strings.playlists,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.weight(1f)
+            )
+            Button(onClick = { showCreateDialog = true }) {
+                Icon(imageVector = Icons.Outlined.Add, contentDescription = null)
+                Text(text = strings.newPlaylist)
+            }
+        }
+        LazyColumn(
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            itemsIndexed(state.playlists, key = { _, p -> p.id }) { index, playlist ->
+                Box {
+                    PlaylistCard(
+                        playlist = playlist,
+                        onClick = { onOpenPlaylist(playlist.id) },
+                        onLongClick = { contextPlaylist = playlist },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    DropdownMenu(
+                        expanded = contextPlaylist?.id == playlist.id,
+                        onDismissRequest = { contextPlaylist = null }
+                    ) {
+                        if (index > 0) {
+                            DropdownMenuItem(
+                                text = { Text("Move up") },
+                                onClick = {
+                                    val ids = state.playlists.toMutableList()
+                                    ids.removeAt(index)
+                                    ids.add(index - 1, playlist)
+                                    viewModel.reorderPlaylists(ids.map { it.id })
+                                    contextPlaylist = null
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.ArrowUpward, contentDescription = null) }
+                            )
+                        }
+                        if (index < state.playlists.lastIndex) {
+                            DropdownMenuItem(
+                                text = { Text("Move down") },
+                                onClick = {
+                                    val ids = state.playlists.toMutableList()
+                                    ids.removeAt(index)
+                                    ids.add(index + 1, playlist)
+                                    viewModel.reorderPlaylists(ids.map { it.id })
+                                    contextPlaylist = null
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.ArrowDownward, contentDescription = null) }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(strings.renamePlaylist) },
+                            onClick = {
+                                renameTarget = playlist
+                                contextPlaylist = null
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.mergeFromPlaylist) },
+                            onClick = {
+                                mergeTarget = playlist
+                                contextPlaylist = null
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Merge, contentDescription = null) }
+                        )
+                        if (playlist.id != com.musicplayer.app.data.repository.PlaylistRepositoryImpl.LIKED_PLAYLIST_ID) {
+                            DropdownMenuItem(
+                                text = { Text(strings.deletePlaylist) },
+                                onClick = {
+                                    deleteTarget = playlist
+                                    contextPlaylist = null
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) }
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = strings.listeningRankings,
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RankingPeriod.entries.forEach { period ->
+                        FilterChip(
+                            selected = rankingPeriod == period,
+                            onClick = { viewModel.selectRankingPeriod(period) },
+                            label = {
+                                Text(
+                                    when (period) {
+                                        RankingPeriod.DAILY -> strings.daily
+                                        RankingPeriod.WEEKLY -> strings.weekly
+                                        RankingPeriod.MONTHLY -> strings.monthly
+                                        RankingPeriod.YEARLY -> strings.yearly
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (rankedSongs.isEmpty()) {
+                item {
+                    Text(
+                        text = strings.noRankingData,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                itemsIndexed(rankedSongs, key = { _, r -> r.song.id }) { index, ranked ->
+                    RankingSongRow(
+                        rank = index + 1,
+                        song = ranked.song,
+                        totalMs = ranked.totalMs,
+                        onClick = { }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showCreateDialog) {
+        CreatePlaylistDialog(
+            onCreate = { name ->
+                viewModel.createPlaylist(name)
+                showCreateDialog = false
+            },
+            onDismiss = { showCreateDialog = false }
+        )
+    }
+    renameTarget?.let { playlist ->
+        RenamePlaylistDialog(
+            currentName = playlist.name,
+            onRename = { name ->
+                viewModel.renamePlaylist(playlist.id, name)
+                renameTarget = null
+            },
+            onDismiss = { renameTarget = null }
+        )
+    }
+    deleteTarget?.let { playlist ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(strings.deletePlaylist) },
+            text = { Text(strings.deletePlaylistConfirm) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deletePlaylist(playlist.id)
+                    deleteTarget = null
+                }) { Text(strings.deletePlaylist) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text(strings.cancel) }
+            }
+        )
+    }
+    mergeTarget?.let { target ->
+        MergePlaylistDialog(
+            allPlaylists = state.playlists.filter { it.id != target.id },
+            onMerge = { sourceId ->
+                viewModel.addSongsFromPlaylist(target.id, sourceId)
+                mergeTarget = null
+            },
+            onDismiss = { mergeTarget = null }
+        )
+    }
+}
+
+@Composable
+private fun RankingSongRow(
+    rank: Int,
+    song: Song,
+    totalMs: Long,
+    onClick: () -> Unit
+) {
+    val strings = LocalStrings.current
+    val hours = totalMs / 3_600_000
+    val minutes = (totalMs % 3_600_000) / 60_000
+    val durationText = if (hours > 0) "${hours}${strings.rankingHours} ${minutes}min"
+    else "${minutes}min"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "$rank",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (rank <= 3) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = song.artistName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = durationText,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CreatePlaylistDialog(
+    onCreate: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalStrings.current
+    var name by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.newPlaylist) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(strings.playlistName) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(name.ifBlank { strings.newPlaylist }) },
+                enabled = true
+            ) { Text(strings.newPlaylist) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(strings.cancel) }
+        }
+    )
+}
+
+@Composable
+private fun RenamePlaylistDialog(
+    currentName: String,
+    onRename: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalStrings.current
+    var name by rememberSaveable { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.renamePlaylist) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(strings.playlistName) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(name.ifBlank { currentName }) },
+                enabled = true
+            ) { Text(strings.renamePlaylist) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(strings.cancel) }
+        }
+    )
+}
+
+@Composable
+private fun MergePlaylistDialog(
+    allPlaylists: List<Playlist>,
+    onMerge: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalStrings.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.mergeFromPlaylist) },
+        text = {
+            if (allPlaylists.isEmpty()) {
+                Text(strings.mergeFromPlaylistDesc)
+            } else {
+                Column {
+                    Text(
+                        text = strings.mergeFromPlaylistDesc,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    allPlaylists.forEach { playlist ->
+                        TextButton(
+                            onClick = { onMerge(playlist.id) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "${playlist.name} (${playlist.songCount})",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(strings.close) }
+        }
+    )
+}

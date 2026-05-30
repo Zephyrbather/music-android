@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">音乐播放器</string>
+    <string name="playback_channel_name">播放</string>
+    <string name="playback_channel_description">音乐播放控制</string>
+    <string name="notification_previous">上一首</string>
+    <string name="notification_play">播放</string>
+    <string name="notification_pause">暂停</string>
+    <string name="notification_next">下一首</string>
+</resources>
