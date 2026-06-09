@@ -28,6 +28,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media.app.NotificationCompat.MediaStyle as MediaNotificationStyle
 import com.musicplayer.app.MainActivity
@@ -77,8 +78,18 @@ class MusicPlaybackService : Service() {
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                50_000,
+                100_000,
+                5_000,
+                10_000
+            )
+            .build()
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
+            .setLoadControl(loadControl)
+            .setHandleAudioBecomingNoisy(true)
             .build()
         thread(name = "PlaybackPriorityBoost") {
             cpuPerformanceManager.boostPlaybackThread()
