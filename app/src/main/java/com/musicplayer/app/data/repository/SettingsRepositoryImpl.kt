@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.musicplayer.app.domain.model.PlaybackMode
+import com.musicplayer.app.domain.model.SongCategoryTags
 import com.musicplayer.app.domain.repository.AppLanguage
 import com.musicplayer.app.domain.repository.AiProvider
 import com.musicplayer.app.domain.repository.FontFamilyOption
@@ -24,6 +25,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -77,9 +79,17 @@ class SettingsRepositoryImpl @Inject constructor(
         preferences[BACKGROUND_AI_SCRAPE] ?: false
     }
 
+    override val aiCategoryScrapeEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[AI_CATEGORY_SCRAPE] ?: false
+    }
+
     override val playbackMode: Flow<PlaybackMode> = context.settingsDataStore.data.map { preferences ->
         preferences[PLAYBACK_MODE]?.let { runCatching { PlaybackMode.valueOf(it) }.getOrNull() }
             ?: PlaybackMode.SEQUENTIAL
+    }
+
+    override val desktopLyricsEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[DESKTOP_LYRICS_ENABLED] ?: false
     }
 
     override val aiProvider: Flow<AiProvider> = context.settingsDataStore.data.map { preferences ->
@@ -93,6 +103,18 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override val aiModel: Flow<String> = context.settingsDataStore.data.map { preferences ->
         preferences[AI_MODEL]?.takeIf { it.isNotBlank() } ?: DEFAULT_DEEPSEEK_MODEL
+    }
+
+    override val adaptiveEqualizerEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[ADAPTIVE_EQUALIZER] ?: false
+    }
+
+    override val equalizerCategoryPresets: Flow<Map<String, String>> = context.settingsDataStore.data.map { preferences ->
+        val stored = preferences[EQ_CATEGORY_PRESETS]
+            ?.mapNotNull(::decodeCategoryPreset)
+            ?.toMap()
+            .orEmpty()
+        SongCategoryTags.defaultPresetByCategory + stored
     }
 
     override val localScanFolderUris: Flow<List<String>> = context.settingsDataStore.data.map { preferences ->
@@ -135,8 +157,16 @@ class SettingsRepositoryImpl @Inject constructor(
         context.settingsDataStore.edit { preferences -> preferences[BACKGROUND_AI_SCRAPE] = enabled }
     }
 
+    override suspend fun setAiCategoryScrapeEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[AI_CATEGORY_SCRAPE] = enabled }
+    }
+
     override suspend fun setPlaybackMode(mode: PlaybackMode) {
         context.settingsDataStore.edit { preferences -> preferences[PLAYBACK_MODE] = mode.name }
+    }
+
+    override suspend fun setDesktopLyricsEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[DESKTOP_LYRICS_ENABLED] = enabled }
     }
 
     override suspend fun setAiProvider(provider: AiProvider) {
@@ -157,6 +187,19 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setAiModel(model: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[AI_MODEL] = model.trim().ifBlank { DEFAULT_DEEPSEEK_MODEL }
+        }
+    }
+
+    override suspend fun setAdaptiveEqualizerEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[ADAPTIVE_EQUALIZER] = enabled }
+    }
+
+    override suspend fun setEqualizerCategoryPreset(category: String, presetId: String) {
+        val normalizedCategory = SongCategoryTags.normalize(category) ?: return
+        val normalizedPreset = presetId.trim().takeIf { it.isNotBlank() } ?: return
+        updateStringSet(EQ_CATEGORY_PRESETS) { mappings ->
+            mappings.filterNot { it.substringBefore('|') == normalizedCategory }.toSet() +
+                encodeCategoryPreset(normalizedCategory, normalizedPreset)
         }
     }
 
@@ -220,9 +263,15 @@ class SettingsRepositoryImpl @Inject constructor(
             put("auto_scan_local", prefs[AUTO_SCAN_LOCAL] ?: false)
             put("auto_scrape", prefs[AUTO_SCRAPE] ?: true)
             put("background_ai_scrape", prefs[BACKGROUND_AI_SCRAPE] ?: false)
+            put("ai_category_scrape", prefs[AI_CATEGORY_SCRAPE] ?: false)
             put("playback_mode", prefs[PLAYBACK_MODE] ?: PlaybackMode.SEQUENTIAL.name)
+            put("desktop_lyrics_enabled", prefs[DESKTOP_LYRICS_ENABLED] ?: false)
             put("ai_provider", prefs[AI_PROVIDER] ?: AiProvider.DEEPSEEK.name)
             put("ai_model", prefs[AI_MODEL] ?: DEFAULT_DEEPSEEK_MODEL)
+            put("adaptive_equalizer", prefs[ADAPTIVE_EQUALIZER] ?: false)
+            put("eq_category_presets", JSONArray(
+                prefs[EQ_CATEGORY_PRESETS]?.toList().orEmpty()
+            ))
             put("local_scan_folders", org.json.JSONArray(
                 prefs[LOCAL_SCAN_FOLDERS]?.toList().orEmpty()
             ))
@@ -251,9 +300,19 @@ class SettingsRepositoryImpl @Inject constructor(
             if (j.has("background_ai_scrape")) {
                 prefs[BACKGROUND_AI_SCRAPE] = j.getBoolean("background_ai_scrape") && prefs[AI_API_KEY] != null
             }
+            if (j.has("ai_category_scrape")) {
+                prefs[AI_CATEGORY_SCRAPE] = j.getBoolean("ai_category_scrape") && prefs[AI_API_KEY] != null
+            }
             j.optString("playback_mode").takeIf { it.isNotBlank() }?.let { prefs[PLAYBACK_MODE] = it }
+            if (j.has("desktop_lyrics_enabled")) {
+                prefs[DESKTOP_LYRICS_ENABLED] = j.getBoolean("desktop_lyrics_enabled")
+            }
             j.optString("ai_provider").takeIf { it.isNotBlank() }?.let { prefs[AI_PROVIDER] = it }
             j.optString("ai_model").takeIf { it.isNotBlank() }?.let { prefs[AI_MODEL] = it }
+            if (j.has("adaptive_equalizer")) prefs[ADAPTIVE_EQUALIZER] = j.getBoolean("adaptive_equalizer")
+            j.optJSONArray("eq_category_presets")?.let { arr ->
+                prefs[EQ_CATEGORY_PRESETS] = (0 until arr.length()).map { arr.getString(it) }.toSet()
+            }
             j.optJSONArray("local_scan_folders")?.let { arr ->
                 prefs[LOCAL_SCAN_FOLDERS] = (0 until arr.length()).map { arr.getString(it) }.toSet()
             }
@@ -266,6 +325,18 @@ class SettingsRepositoryImpl @Inject constructor(
                 prefs[WEBDAV_FOLDERS] = (0 until arr.length()).map { arr.getString(it) }.toSet()
             }
         }
+    }
+
+    private fun encodeCategoryPreset(category: String, presetId: String): String {
+        return "$category|$presetId"
+    }
+
+    private fun decodeCategoryPreset(value: String): Pair<String, String>? {
+        val category = value.substringBefore('|').trim()
+        val presetId = value.substringAfter('|', "").trim()
+        val normalizedCategory = SongCategoryTags.normalize(category) ?: return null
+        if (presetId.isBlank()) return null
+        return normalizedCategory to presetId
     }
 
     private suspend fun updateStringSet(
@@ -332,10 +403,14 @@ class SettingsRepositoryImpl @Inject constructor(
         val AUTO_SCAN_LOCAL = booleanPreferencesKey("auto_scan_local")
         val AUTO_SCRAPE = booleanPreferencesKey("auto_scrape")
         val BACKGROUND_AI_SCRAPE = booleanPreferencesKey("background_ai_scrape")
+        val AI_CATEGORY_SCRAPE = booleanPreferencesKey("ai_category_scrape")
         val PLAYBACK_MODE = stringPreferencesKey("playback_mode")
+        val DESKTOP_LYRICS_ENABLED = booleanPreferencesKey("desktop_lyrics_enabled")
         val AI_PROVIDER = stringPreferencesKey("ai_provider")
         val AI_API_KEY = stringPreferencesKey("ai_api_key")
         val AI_MODEL = stringPreferencesKey("ai_model")
+        val ADAPTIVE_EQUALIZER = booleanPreferencesKey("adaptive_equalizer")
+        val EQ_CATEGORY_PRESETS = stringSetPreferencesKey("eq_category_presets")
         val LOCAL_SCAN_FOLDERS = stringSetPreferencesKey("local_scan_folders")
         val SCRAPE_CANDIDATES = stringSetPreferencesKey("scrape_candidates")
         val SCRAPE_COMPLETED = intPreferencesKey("scrape_completed")

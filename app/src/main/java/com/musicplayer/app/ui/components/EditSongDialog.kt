@@ -1,5 +1,8 @@
 package com.musicplayer.app.ui.components
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -50,11 +54,24 @@ fun EditSongDialog(
     onDismiss: () -> Unit
 ) {
     val strings = LocalStrings.current
+    val context = LocalContext.current
     var title by remember { mutableStateOf(song.title) }
     var artist by remember { mutableStateOf(song.artistName) }
     var album by remember { mutableStateOf(song.albumTitle) }
     var artworkUri by remember { mutableStateOf(song.artworkUri.orEmpty()) }
     val normalizedArtworkUri = artworkUri.trim().takeIf { it.isNotBlank() }
+    val artworkPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        artworkUri = uri.toString()
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -86,11 +103,14 @@ fun EditSongDialog(
                     shape = MaterialTheme.shapes.medium
                 ) {
                     if (!normalizedArtworkUri.isNullOrBlank()) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
+                        val imageRequest = remember(context, normalizedArtworkUri) {
+                            ImageRequest.Builder(context)
                                 .data(normalizedArtworkUri)
-                                .crossfade(true)
-                                .build(),
+                                .crossfade(false)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = imageRequest,
                             contentDescription = strings.artwork,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -143,12 +163,19 @@ fun EditSongDialog(
                     singleLine = true,
                     label = { Text(strings.album) }
                 )
+                OutlinedButton(
+                    onClick = { artworkPicker.launch(arrayOf("image/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.PhotoLibrary, contentDescription = null)
+                    Text(strings.selectArtworkFile, modifier = Modifier.padding(start = 8.dp))
+                }
                 OutlinedTextField(
                     value = artworkUri,
                     onValueChange = { artworkUri = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text(strings.artwork) },
+                    label = { Text(strings.artworkUri) },
                     supportingText = {
                         Text(
                             text = song.artworkProvider ?: strings.missingData,
@@ -175,12 +202,15 @@ fun EditSongDialog(
                     }
                     Button(
                         onClick = {
+                            val savedArtworkProvider = normalizedArtworkUri?.let {
+                                if (it == song.artworkUri) song.artworkProvider ?: "Manual" else "Manual"
+                            }
                             onSave(
                                 title.trim(),
                                 artist.trim(),
                                 album.trim(),
                                 normalizedArtworkUri,
-                                normalizedArtworkUri?.let { song.artworkProvider ?: "Manual" }
+                                savedArtworkProvider
                             )
                         },
                         enabled = title.isNotBlank(),

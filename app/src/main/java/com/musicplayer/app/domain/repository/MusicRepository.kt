@@ -16,14 +16,19 @@ interface MusicRepository {
     suspend fun saveScrapedMetadata(
         song: Song,
         mode: ScrapeSearchMode = ScrapeSearchMode.ALL,
-        renameLocalFile: Boolean = false
+        renameLocalFile: Boolean = false,
+        rebuildLibraryArtwork: Boolean = true
     ): Song
     suspend fun rebuildLibraryArtwork(fetchArtistArtwork: Boolean = false)
     suspend fun setFavorite(songId: String, favorite: Boolean)
     suspend fun removeFromLibrary(songId: String)
     suspend fun deleteLocalFile(songId: String): Boolean
     suspend fun scanLocalLibrary(onBatch: suspend (List<Song>) -> Unit = {}): List<Song>
-    suspend fun refreshMetadata(songId: String, provider: MetadataProvider = MetadataProvider.AUTO): Song?
+    suspend fun refreshMetadata(
+        songId: String,
+        provider: MetadataProvider = MetadataProvider.AUTO,
+        rebuildLibraryArtwork: Boolean = true
+    ): Song?
     suspend fun refreshArtistArtwork(artistName: String): String?
     suspend fun updateSongMetadata(
         songId: String,
@@ -33,4 +38,5 @@ interface MusicRepository {
         artworkUri: String?,
         artworkProvider: String?
     )
+    suspend fun updateSongCategory(songId: String, categoryTag: String?): Song?
 }

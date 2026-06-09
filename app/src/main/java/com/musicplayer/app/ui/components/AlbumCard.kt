@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +46,7 @@ fun AlbumCard(
 ) {
     val strings = LocalStrings.current
     val dateText = formatReleaseDate(album.releaseYear, album.releaseMonth)
+    val artworkHeight = 160.dp
     Card(
         onClick = onClick,
         modifier = modifier,
@@ -54,16 +57,22 @@ fun AlbumCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp)
+                    .height(artworkHeight)
                     .clip(MaterialTheme.shapes.medium),
                 contentAlignment = Alignment.Center
             ) {
                 if (!album.artworkUri.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
+                    val context = LocalContext.current
+                    val imageSizePx = with(LocalDensity.current) { artworkHeight.roundToPx().coerceAtLeast(1) }
+                    val imageRequest = remember(context, album.artworkUri, imageSizePx) {
+                        ImageRequest.Builder(context)
                             .data(album.artworkUri)
-                            .crossfade(true)
-                            .build(),
+                            .size(imageSizePx, imageSizePx)
+                            .crossfade(false)
+                            .build()
+                    }
+                    AsyncImage(
+                        model = imageRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -80,7 +89,7 @@ fun AlbumCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp)
+                    .height(artworkHeight)
                     .clip(MaterialTheme.shapes.medium)
                     .background(
                         brush = Brush.verticalGradient(

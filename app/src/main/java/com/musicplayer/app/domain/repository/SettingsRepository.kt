@@ -14,6 +14,7 @@ enum class ThemeStyle {
     OCEAN,
     FOREST,
     ROSE,
+    TWILIGHT_PURPLE,
     MONO,
     IMMERSIVE
 }
@@ -42,10 +43,14 @@ interface SettingsRepository {
     val autoScanLocalLibraryEnabled: Flow<Boolean>
     val autoScrapeEnabled: Flow<Boolean>
     val backgroundAiScrapeEnabled: Flow<Boolean>
+    val aiCategoryScrapeEnabled: Flow<Boolean>
     val playbackMode: Flow<PlaybackMode>
+    val desktopLyricsEnabled: Flow<Boolean>
     val aiProvider: Flow<AiProvider>
     val aiApiKey: Flow<String>
     val aiModel: Flow<String>
+    val adaptiveEqualizerEnabled: Flow<Boolean>
+    val equalizerCategoryPresets: Flow<Map<String, String>>
     val localScanFolderUris: Flow<List<String>>
     suspend fun setThemeMode(mode: ThemeMode)
     suspend fun setThemeStyle(style: ThemeStyle)
@@ -55,10 +60,14 @@ interface SettingsRepository {
     suspend fun setAutoScanLocalLibraryEnabled(enabled: Boolean)
     suspend fun setAutoScrapeEnabled(enabled: Boolean)
     suspend fun setBackgroundAiScrapeEnabled(enabled: Boolean)
+    suspend fun setAiCategoryScrapeEnabled(enabled: Boolean)
     suspend fun setPlaybackMode(mode: PlaybackMode)
+    suspend fun setDesktopLyricsEnabled(enabled: Boolean)
     suspend fun setAiProvider(provider: AiProvider)
     suspend fun setAiApiKey(apiKey: String)
     suspend fun setAiModel(model: String)
+    suspend fun setAdaptiveEqualizerEnabled(enabled: Boolean)
+    suspend fun setEqualizerCategoryPreset(category: String, presetId: String)
     val scrapeResumeCandidateIds: Flow<List<String>>
     val scrapeResumeCompleted: Flow<Int>
     val scrapeResumeTotal: Flow<Int>

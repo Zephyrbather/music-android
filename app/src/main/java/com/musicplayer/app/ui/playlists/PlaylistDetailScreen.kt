@@ -90,7 +90,11 @@ fun PlaylistDetailScreen(
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(songs, key = { it.id }) { song ->
+                items(
+                    items = songs,
+                    key = { it.id },
+                    contentType = { "playlist-song" }
+                ) { song ->
                     SongListItem(
                         song = song,
                         onClick = { onPlaySong(song, songs) },

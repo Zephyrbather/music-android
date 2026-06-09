@@ -123,6 +123,23 @@ private fun lightColors(style: ThemeStyle) = when (style) {
         background = ColorTokens.roseSurface
     )
 
+    ThemeStyle.TWILIGHT_PURPLE -> lightColorScheme(
+        primary = TwilightPurple,
+        onPrimary = Paper,
+        primaryContainer = ColorTokens.twilightContainer,
+        onPrimaryContainer = Ink,
+        secondary = TwilightAmber,
+        onSecondary = Paper,
+        secondaryContainer = ColorTokens.twilightAmberContainer,
+        onSecondaryContainer = Ink,
+        tertiary = TwilightBlue,
+        surface = ColorTokens.twilightSurface,
+        onSurface = Ink,
+        surfaceVariant = ColorTokens.twilightSurfaceVariant,
+        onSurfaceVariant = ColorTokens.mutedInk,
+        background = ColorTokens.twilightSurface
+    )
+
     ThemeStyle.MONO -> lightColorScheme(
         primary = MonoPrimary,
         onPrimary = Paper,
@@ -208,6 +225,23 @@ private fun darkColors(style: ThemeStyle) = when (style) {
         background = ColorTokens.roseDarkSurface
     )
 
+    ThemeStyle.TWILIGHT_PURPLE -> darkColorScheme(
+        primary = ColorTokens.twilightDark,
+        onPrimary = Ink,
+        primaryContainer = TwilightPurple,
+        onPrimaryContainer = Paper,
+        secondary = ColorTokens.twilightAmberDark,
+        onSecondary = Ink,
+        secondaryContainer = TwilightAmber,
+        onSecondaryContainer = Paper,
+        tertiary = ColorTokens.twilightBlueDark,
+        surface = ColorTokens.twilightDarkSurface,
+        onSurface = ColorTokens.lightInk,
+        surfaceVariant = ColorTokens.twilightDarkSurfaceVariant,
+        onSurfaceVariant = ColorTokens.darkMutedInk,
+        background = ColorTokens.twilightDarkSurface
+    )
+
     ThemeStyle.MONO -> darkColorScheme(
         primary = ColorTokens.monoDark,
         onPrimary = Ink,
@@ -260,6 +294,15 @@ private object ColorTokens {
     val roseDarkSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF352329)
     val plumContainer = androidx.compose.ui.graphics.Color(0xFFE5D3F2)
     val plumDark = androidx.compose.ui.graphics.Color(0xFFD2B5EA)
+    val twilightContainer = androidx.compose.ui.graphics.Color(0xFFE8DEFF)
+    val twilightSurface = androidx.compose.ui.graphics.Color(0xFFFCF8FF)
+    val twilightSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFE7DFF0)
+    val twilightDark = androidx.compose.ui.graphics.Color(0xFFD0BCFF)
+    val twilightDarkSurface = androidx.compose.ui.graphics.Color(0xFF17121C)
+    val twilightDarkSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF30273A)
+    val twilightAmberContainer = androidx.compose.ui.graphics.Color(0xFFF2DFB8)
+    val twilightAmberDark = androidx.compose.ui.graphics.Color(0xFFE7C781)
+    val twilightBlueDark = androidx.compose.ui.graphics.Color(0xFFA7D0E3)
     val monoContainer = androidx.compose.ui.graphics.Color(0xFFD9DDE2)
     val monoSurface = androidx.compose.ui.graphics.Color(0xFFF8F9FA)
     val monoSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFE2E4E8)

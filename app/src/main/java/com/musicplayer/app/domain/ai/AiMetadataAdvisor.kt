@@ -21,4 +21,11 @@ interface AiMetadataAdvisor {
         apiKey: String,
         model: String
     ): TrackMetadataCandidate?
+
+    suspend fun classifySong(
+        song: Song,
+        apiKey: String,
+        model: String,
+        categories: List<String>
+    ): String?
 }

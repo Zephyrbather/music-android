@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,10 +16,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,11 +43,7 @@ import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,19 +52,15 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,21 +70,18 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.musicplayer.app.data.local.entity.CommentEntity
@@ -103,25 +92,21 @@ import com.musicplayer.app.domain.model.ScrapeCandidates
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.ui.components.SongArtwork
 import com.musicplayer.app.ui.i18n.LocalStrings
 
 @Composable
 fun NowPlayingScreen(
     playbackState: PlaybackState,
-    controlsState: PlayerControlsState,
     onSkipPrevious: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onQueueSongSelected: (Song) -> Unit,
     onPlaybackModeChange: (PlaybackMode) -> Unit,
-    onPresetSelected: (EqualizerPreset) -> Unit,
-    onDraftNameChange: (String) -> Unit,
-    onBandLevelChange: (Int, Float) -> Unit,
-    onCreatePreset: () -> Unit,
-    onSavePreset: () -> Unit,
-    onDeletePreset: () -> Unit,
-    onCloseEqualizer: () -> Unit,
+    desktopLyricsEnabled: Boolean = false,
+    onToggleDesktopLyrics: () -> Unit = {},
+    onOpenEqualizer: () -> Unit = {},
     onOpenScrapeDetail: () -> Unit = {},
     showCommentDialog: Boolean = false,
     comments: List<CommentEntity> = emptyList(),
@@ -137,15 +122,19 @@ fun NowPlayingScreen(
 ) {
     val strings = LocalStrings.current
     val song = playbackState.currentSong
-    var activePanel by rememberSaveable { mutableStateOf(PlayerPanel.NONE) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var lyricsMode by rememberSaveable(song?.id) { mutableStateOf(false) }
 
     if (lyricsMode) {
         LyricsMode(
-            song = song,
-            positionMs = playbackState.positionMs,
+            playbackState = playbackState,
             onSeekTo = onSeekTo,
+            onSkipPrevious = onSkipPrevious,
+            onTogglePlayPause = onTogglePlayPause,
+            onSkipNext = onSkipNext,
+            desktopLyricsEnabled = desktopLyricsEnabled,
+            onToggleDesktopLyrics = onToggleDesktopLyrics,
+            onPlaybackModeChange = onPlaybackModeChange,
             onExit = { lyricsMode = false },
             modifier = modifier
         )
@@ -187,6 +176,7 @@ fun NowPlayingScreen(
             )
             song?.let { s ->
                 val parts = buildList {
+                    s.categoryTag?.takeIf { it.isNotBlank() }?.let { add("${strings.songCategory}: $it") }
                     s.qualityLabel.takeIf { it.isNotBlank() && it != "Unknown" }?.let { add(it) }
                     s.releaseYear?.takeIf { it > 0 }?.let { year ->
                         val dateStr = if (s.releaseMonth != null && s.releaseMonth > 0) {
@@ -216,29 +206,9 @@ fun NowPlayingScreen(
             modifier = Modifier.padding(vertical = 12.dp)
         )
         Spacer(modifier = Modifier.weight(0.1f))
-        PlayerPanelSurface(activePanel) {
-            when (activePanel) {
-                PlayerPanel.EQUALIZER -> EqualizerPanel(
-                    state = controlsState,
-                    onPresetSelected = onPresetSelected,
-                    onDraftNameChange = onDraftNameChange,
-                    onBandLevelChange = onBandLevelChange,
-                    onCreatePreset = onCreatePreset,
-                    onSavePreset = onSavePreset,
-                    onDeletePreset = onDeletePreset,
-                    onClose = {
-                        onCloseEqualizer()
-                        activePanel = PlayerPanel.NONE
-                    }
-                )
-
-                PlayerPanel.NONE -> Unit
-            }
-        }
         PanelButtonRow(
             enabled = song != null,
             hasQueue = playbackState.queue.isNotEmpty(),
-            activePanel = activePanel,
             playbackMode = playbackState.playbackMode,
             onScrapeClick = onOpenScrapeDetail,
             onModeClick = {
@@ -249,9 +219,7 @@ fun NowPlayingScreen(
                 }
                 onPlaybackModeChange(nextMode)
             },
-            onEqualizerClick = {
-                activePanel = if (activePanel == PlayerPanel.EQUALIZER) PlayerPanel.NONE else PlayerPanel.EQUALIZER
-            },
+            onEqualizerClick = onOpenEqualizer,
             onQueueClick = { showQueue = true },
             onCommentsClick = onOpenComments
         )
@@ -314,11 +282,15 @@ private fun AlbumArtwork(
         color = MaterialTheme.colorScheme.primaryContainer
     ) {
         if (!song?.artworkUri.isNullOrBlank()) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
+            val context = LocalContext.current
+            val imageRequest = remember(context, song?.artworkUri) {
+                ImageRequest.Builder(context)
                     .data(song?.artworkUri)
-                    .crossfade(true)
-                    .build(),
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = imageRequest,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
@@ -390,7 +362,6 @@ private fun PlaybackProgress(
 private fun PanelButtonRow(
     enabled: Boolean,
     hasQueue: Boolean,
-    activePanel: PlayerPanel,
     playbackMode: PlaybackMode,
     onScrapeClick: () -> Unit,
     onModeClick: () -> Unit,
@@ -425,7 +396,7 @@ private fun PanelButtonRow(
             }
         }
         PanelButton(
-            selected = activePanel == PlayerPanel.EQUALIZER,
+            selected = false,
             onClick = onEqualizerClick
         ) {
             Icon(Icons.Outlined.GraphicEq, contentDescription = strings.equalizer)
@@ -508,25 +479,6 @@ private fun PanelButton(
             LocalContentColor provides tint,
             content = content
         )
-    }
-}
-
-@Composable
-private fun PlayerPanelSurface(
-    activePanel: PlayerPanel,
-    content: @Composable () -> Unit
-) {
-    if (activePanel == PlayerPanel.NONE) return
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 380.dp),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Box(modifier = Modifier.padding(16.dp)) {
-            content()
-        }
     }
 }
 
@@ -942,11 +894,15 @@ private fun CandidateDialog(
                                         color = if (selected) MaterialTheme.colorScheme.primaryContainer
                                         else MaterialTheme.colorScheme.surfaceVariant
                                     ) {
-                                        AsyncImage(
-                                            model = ImageRequest.Builder(LocalContext.current)
+                                        val context = LocalContext.current
+                                        val imageRequest = remember(context, result.imageUri) {
+                                            ImageRequest.Builder(context)
                                                 .data(result.imageUri)
-                                                .crossfade(true)
-                                                .build(),
+                                                .crossfade(false)
+                                                .build()
+                                        }
+                                        AsyncImage(
+                                            model = imageRequest,
                                             contentDescription = null,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
@@ -986,34 +942,24 @@ private fun CandidateDialog(
 
 @Composable
 private fun LyricsMode(
-    song: Song?,
-    positionMs: Long,
+    playbackState: PlaybackState,
     onSeekTo: (Long) -> Unit,
+    onSkipPrevious: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    desktopLyricsEnabled: Boolean,
+    onToggleDesktopLyrics: () -> Unit,
+    onPlaybackModeChange: (PlaybackMode) -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
+    val song = playbackState.currentSong
     val timedLines = remember(song?.lyrics) { parseTimedLyrics(song?.lyrics) }
-
-    val view = LocalView.current
-    val windowInsetsController = remember(view) {
-        view.getActivityWindow()?.let { WindowCompat.getInsetsController(it, view) }
-    }
-
-    LaunchedEffect(Unit) {
-        windowInsetsController?.hide(WindowInsetsCompat.Type.statusBars())
-        windowInsetsController?.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            windowInsetsController?.show(WindowInsetsCompat.Type.statusBars())
-        }
-    }
+    val positionMs = playbackState.positionMs
 
     val currentIndex = remember(timedLines, positionMs) {
-        timedLines.indexOfLast { it.timeMs <= positionMs }.coerceAtLeast(0)
+        timedLines.findCurrentLyricIndex(positionMs)
     }
     val listState = rememberLazyListState()
 
@@ -1026,68 +972,247 @@ private fun LyricsMode(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(immersiveLyricsBackgroundBrush())
             .clickable(onClick = onExit)
-            .padding(horizontal = 28.dp, vertical = 48.dp)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 28.dp, vertical = 18.dp)
     ) {
-        if (timedLines.isEmpty()) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            ImmersiveLyricsHeader(
+                song = song,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
             ) {
-                Text(
-                    text = song?.title ?: strings.nothingPlaying,
-                    style = MaterialTheme.typography.headlineSmall,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    text = song?.lyricsProvider ?: strings.chooseSong,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                itemsIndexed(timedLines, key = { index, _ -> index }) { index, line ->
-                    val isCurrent = index == currentIndex
-                    Text(
-                        text = line.text,
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center,
-                        color = if (isCurrent) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        modifier = Modifier.pointerInput(line.timeMs) {
-                            detectTapGestures(
-                                onDoubleTap = { onSeekTo(line.timeMs) }
+                if (timedLines.isEmpty()) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = song?.title ?: strings.nothingPlaying,
+                            style = MaterialTheme.typography.headlineSmall,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = song?.lyricsProvider ?: strings.chooseSong,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 28.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        itemsIndexed(timedLines, key = { index, _ -> index }) { index, line ->
+                            val isCurrent = index == currentIndex
+                            Text(
+                                text = line.text,
+                                style = MaterialTheme.typography.titleLarge,
+                                textAlign = TextAlign.Center,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.pointerInput(line.timeMs) {
+                                    detectTapGestures(
+                                        onDoubleTap = { onSeekTo(line.timeMs) }
+                                    )
+                                }
                             )
                         }
+                    }
+                }
+            }
+            ImmersiveBottomControls(
+                enabled = song != null,
+                isPlaying = playbackState.isPlaying,
+                playbackMode = playbackState.playbackMode,
+                desktopLyricsEnabled = desktopLyricsEnabled,
+                onToggleDesktopLyrics = onToggleDesktopLyrics,
+                onSkipPrevious = onSkipPrevious,
+                onTogglePlayPause = onTogglePlayPause,
+                onSkipNext = onSkipNext,
+                onModeClick = {
+                    onPlaybackModeChange(playbackState.playbackMode.nextMode())
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun immersiveLyricsBackgroundBrush(): Brush {
+    val scheme = MaterialTheme.colorScheme
+    return Brush.verticalGradient(
+        colors = listOf(
+            scheme.primaryContainer,
+            scheme.background,
+            scheme.secondaryContainer,
+            scheme.tertiaryContainer,
+            scheme.surface
+        )
+    )
+}
+
+@Composable
+private fun ImmersiveLyricsHeader(
+    song: Song?,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (song != null) {
+            SongArtwork(song = song, modifier = Modifier.size(52.dp), imageSize = 52.dp)
+        } else {
+            Surface(
+                modifier = Modifier.size(52.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Outlined.Album,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                }
+            }
+        }
+        Text(
+            text = song?.titleAlbumLine() ?: LocalStrings.current.nothingPlaying,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun ImmersiveBottomControls(
+    enabled: Boolean,
+    isPlaying: Boolean,
+    playbackMode: PlaybackMode,
+    desktopLyricsEnabled: Boolean,
+    onToggleDesktopLyrics: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    onModeClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    val buttonTint = MaterialTheme.colorScheme.onSurfaceVariant
+    val activeTint = MaterialTheme.colorScheme.primary
+    Surface(
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+        tonalElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onToggleDesktopLyrics,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                DesktopLyricsIcon(if (desktopLyricsEnabled) activeTint else buttonTint)
+            }
+            IconButton(
+                onClick = onSkipPrevious,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(Icons.Outlined.SkipPrevious, contentDescription = strings.previous, tint = buttonTint)
+            }
+            FilledIconButton(
+                onClick = onTogglePlayPause,
+                enabled = enabled,
+                modifier = Modifier.size(54.dp)
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                    contentDescription = if (isPlaying) strings.pause else strings.play
+                )
+            }
+            IconButton(
+                onClick = onSkipNext,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(Icons.Outlined.SkipNext, contentDescription = strings.next, tint = buttonTint)
+            }
+            IconButton(
+                onClick = onModeClick,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                when (playbackMode) {
+                    PlaybackMode.SEQUENTIAL -> SequentialIcon(buttonTint)
+                    PlaybackMode.SHUFFLE -> Icon(Icons.Outlined.Shuffle, contentDescription = strings.shuffle, tint = buttonTint)
+                    PlaybackMode.RECOMMENDATION -> RecommendationIcon(buttonTint)
                 }
             }
         }
     }
 }
 
-private fun android.view.View.getActivityWindow(): android.view.Window? {
-    return context.getActivity()?.window
-}
-
-private fun android.content.Context.getActivity(): android.app.Activity? {
-    var ctx = this
-    while (ctx is android.content.ContextWrapper) {
-        if (ctx is android.app.Activity) return ctx
-        ctx = ctx.baseContext
+@Composable
+private fun DesktopLyricsIcon(tint: androidx.compose.ui.graphics.Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val strokeWidth = 2.dp.toPx()
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(size.width * 0.12f, size.height * 0.22f),
+            size = Size(size.width * 0.76f, size.height * 0.56f),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+            style = Stroke(width = strokeWidth)
+        )
+        val barHeight = 2.dp.toPx()
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(size.width * 0.24f, size.height * 0.43f),
+            size = Size(size.width * 0.26f, barHeight),
+            cornerRadius = CornerRadius(barHeight, barHeight)
+        )
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(size.width * 0.56f, size.height * 0.43f),
+            size = Size(size.width * 0.2f, barHeight),
+            cornerRadius = CornerRadius(barHeight, barHeight)
+        )
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(size.width * 0.24f, size.height * 0.58f),
+            size = Size(size.width * 0.42f, barHeight),
+            cornerRadius = CornerRadius(barHeight, barHeight)
+        )
     }
-    return null
 }
 
 @Composable
@@ -1095,22 +1220,45 @@ private fun SequentialIcon(tint: androidx.compose.ui.graphics.Color) {
     Canvas(modifier = Modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
-        val arrowH = h * 0.35f
-        val arrowW = w * 0.48f
-        val gap = w * 0.10f
-        val arrowHead = w * 0.18f
-        val strokeW = 2.5f
-        val arrowColor = tint
-        for (i in 0..1) {
-            val y = h * 0.15f + i * (arrowH + gap)
-            val left = w * 0.05f
-            val right = left + arrowW
-            // Arrow shaft
-            drawLine(arrowColor, androidx.compose.ui.geometry.Offset(left, y + arrowH / 2), androidx.compose.ui.geometry.Offset(right, y + arrowH / 2), strokeW)
-            // Arrowhead
-            drawLine(arrowColor, androidx.compose.ui.geometry.Offset(right, y + arrowH / 2), androidx.compose.ui.geometry.Offset(right - arrowHead, y), strokeW)
-            drawLine(arrowColor, androidx.compose.ui.geometry.Offset(right, y + arrowH / 2), androidx.compose.ui.geometry.Offset(right - arrowHead, y + arrowH), strokeW)
+        val barHeight = h * 0.08f
+        val radius = CornerRadius(barHeight, barHeight)
+        val left = w * 0.14f
+        val rowWidth = w * 0.34f
+        listOf(0.28f, 0.47f, 0.66f).forEachIndexed { index, yFactor ->
+            val width = if (index == 2) rowWidth * 0.72f else rowWidth
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(left, h * yFactor),
+                size = Size(width, barHeight),
+                cornerRadius = radius
+            )
         }
+        val playPath = Path().apply {
+            moveTo(w * 0.61f, h * 0.29f)
+            lineTo(w * 0.61f, h * 0.72f)
+            lineTo(w * 0.88f, h * 0.505f)
+            close()
+        }
+        drawPath(playPath, tint)
+    }
+}
+
+private fun Song.titleAlbumLine(): String {
+    val title = title.trim()
+    val album = albumTitle.trim()
+    return when {
+        title.isNotBlank() && album.isNotBlank() -> "$title-$album"
+        title.isNotBlank() -> title
+        album.isNotBlank() -> album
+        else -> ""
+    }
+}
+
+private fun PlaybackMode.nextMode(): PlaybackMode {
+    return when (this) {
+        PlaybackMode.SEQUENTIAL -> PlaybackMode.SHUFFLE
+        PlaybackMode.SHUFFLE -> PlaybackMode.RECOMMENDATION
+        PlaybackMode.RECOMMENDATION -> PlaybackMode.SEQUENTIAL
     }
 }
 
@@ -1151,197 +1299,6 @@ private fun RecommendationIcon(tint: androidx.compose.ui.graphics.Color) {
     }
 }
 
-@Composable
-private fun EqualizerPanel(
-    state: PlayerControlsState,
-    onPresetSelected: (EqualizerPreset) -> Unit,
-    onDraftNameChange: (String) -> Unit,
-    onBandLevelChange: (Int, Float) -> Unit,
-    onCreatePreset: () -> Unit,
-    onSavePreset: () -> Unit,
-    onDeletePreset: () -> Unit,
-    onClose: () -> Unit
-) {
-    val strings = LocalStrings.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(text = strings.equalizer, style = MaterialTheme.typography.titleMedium)
-            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = strings.close)
-            }
-        }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.presets, key = { it.id }) { preset ->
-                FilterChip(
-                    selected = state.selectedPresetId == preset.id,
-                    onClick = { onPresetSelected(preset) },
-                    label = { Text(preset.displayName(strings), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                )
-            }
-        }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 140.dp)
-        ) {
-            itemsIndexed(state.bandLevels) { index, level ->
-                val freq = state.bandFrequencies.getOrElse(index) { 0 }
-                val freqLabel = if (freq >= 1000) "${freq / 1000}.${(freq % 1000) / 100}kHz" else "${freq}Hz"
-                EqualizerBandSlider(
-                    freqLabel = freqLabel,
-                    value = level,
-                    onValueChange = { onBandLevelChange(index, it) }
-                )
-            }
-        }
-        OutlinedTextField(
-            value = state.draftName,
-            onValueChange = onDraftNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text(strings.presetName) }
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onCreatePreset, modifier = Modifier.weight(1f)) {
-                Text(strings.newPreset, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Button(
-                onClick = onSavePreset,
-                enabled = state.canDelete,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(strings.savePreset, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Button(
-                onClick = onDeletePreset,
-                enabled = state.canDelete,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(strings.deletePreset, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}
-
-@Composable
-private fun EqualizerBandSlider(
-    freqLabel: String,
-    value: Float,
-    onValueChange: (Float) -> Unit
-) {
-    val trackHeight = 130.dp
-    val trackWidth = 6.dp
-    val thumbRadius = 10.dp
-    val valueRange = -6f..6f
-    val inactiveColor = MaterialTheme.colorScheme.surfaceVariant
-    val activeColor = MaterialTheme.colorScheme.primary
-    val currentValue by rememberUpdatedState(value)
-    val currentOnValueChange by rememberUpdatedState(onValueChange)
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-        modifier = Modifier.widthIn(min = 36.dp, max = 48.dp)
-    ) {
-        Text(
-            text = "${value.toInt()}dB",
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center
-        )
-        Box(
-            modifier = Modifier
-                .height(trackHeight + thumbRadius * 2)
-                .width(36.dp)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { _, dragAmount ->
-                        val fraction = -dragAmount / (trackHeight.value * density)
-                        val newValue = (currentValue + fraction * (valueRange.endInclusive - valueRange.start))
-                            .coerceIn(valueRange.start, valueRange.endInclusive)
-                        currentOnValueChange(newValue)
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        val fraction = 1f - (offset.y / size.height).coerceIn(0f, 1f)
-                        val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
-                        currentOnValueChange(newValue)
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val trackLeft = (size.width - trackWidth.toPx()) / 2
-                val trackTop = thumbRadius.toPx()
-                val trackBottom = size.height - thumbRadius.toPx()
-                val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-                val thumbY = trackBottom - fraction * (trackBottom - trackTop)
-
-                // Inactive track
-                drawRoundRect(
-                    color = inactiveColor,
-                    topLeft = Offset(trackLeft, trackTop),
-                    size = Size(trackWidth.toPx(), trackBottom - trackTop),
-                    cornerRadius = CornerRadius(trackWidth.toPx() / 2)
-                )
-                // Active track
-                drawRoundRect(
-                    color = activeColor,
-                    topLeft = Offset(trackLeft, thumbY),
-                    size = Size(trackWidth.toPx(), trackBottom - thumbY),
-                    cornerRadius = CornerRadius(trackWidth.toPx() / 2)
-                )
-                // Thumb
-                drawCircle(
-                    color = activeColor,
-                    radius = thumbRadius.toPx(),
-                    center = Offset(size.width / 2, thumbY)
-                )
-            }
-        }
-        Text(
-            text = freqLabel,
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-private fun PlaybackMode.title(strings: com.musicplayer.app.ui.i18n.AppStrings): String {
-    return when (this) {
-        PlaybackMode.SEQUENTIAL -> strings.sequential
-        PlaybackMode.SHUFFLE -> strings.shuffle
-        PlaybackMode.RECOMMENDATION -> strings.recommendation
-    }
-}
-
-private fun EqualizerPreset.displayName(strings: com.musicplayer.app.ui.i18n.AppStrings): String {
-    return when (id) {
-        "flat" -> strings.eqFlat
-        "vocal" -> strings.eqVocal
-        "bass" -> strings.eqBassBoost
-        "pop" -> strings.eqPop
-        "rock" -> strings.eqRock
-        "classical" -> strings.eqClassical
-        else -> name
-    }
-}
-
-private enum class PlayerPanel {
-    NONE,
-    EQUALIZER
-}
-
 private fun MetadataProvider.title(strings: com.musicplayer.app.ui.i18n.AppStrings): String {
     return when (this) {
         MetadataProvider.AUTO -> strings.autoSource
@@ -1373,6 +1330,23 @@ private fun formatDuration(durationMs: Long): String {
 
 private data class LyricLine(val timeMs: Long, val text: String)
 
+private fun List<LyricLine>.findCurrentLyricIndex(positionMs: Long): Int {
+    if (isEmpty()) return 0
+    var low = 0
+    var high = lastIndex
+    var result = 0
+    while (low <= high) {
+        val mid = (low + high) ushr 1
+        if (this[mid].timeMs <= positionMs) {
+            result = mid
+            low = mid + 1
+        } else {
+            high = mid - 1
+        }
+    }
+    return result
+}
+
 private fun parseTimedLyrics(lyrics: String?): List<LyricLine> {
     val timestampRegex = Regex("\\[(\\d{1,2}):(\\d{2})(?:\\.(\\d{1,3}))?]")
     return lyrics.orEmpty()
@@ -1402,7 +1376,7 @@ private fun LyricsPreview(
     if (timedLines.isEmpty()) return
 
     val currentIndex = remember(timedLines, positionMs) {
-        timedLines.indexOfLast { it.timeMs <= positionMs }.coerceAtLeast(0)
+        timedLines.findCurrentLyricIndex(positionMs)
     }
     val currentLine = timedLines.getOrNull(currentIndex)
     val nextLine = timedLines.getOrNull(currentIndex + 1)

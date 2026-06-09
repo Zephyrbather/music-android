@@ -19,10 +19,13 @@ import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.ScrapeCandidates
 import com.musicplayer.app.domain.model.ScrapeSearchMode
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.domain.model.SongCategoryTags
 import com.musicplayer.app.domain.model.TrackMetadataCandidate
 import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.usecase.CollectScrapeCandidatesUseCase
+import com.musicplayer.app.domain.usecase.AiGenerateSongCategoryResult
+import com.musicplayer.app.domain.usecase.AiGenerateSongCategoryUseCase
 import com.musicplayer.app.domain.usecase.AiMetadataScrapeResult
 import com.musicplayer.app.domain.usecase.AiScrapeMetadataUseCase
 import com.musicplayer.app.domain.usecase.FetchMetadataUseCase
@@ -61,13 +64,17 @@ data class PlayerControlsState(
     val draftName: String = "",
     val bandLevels: List<Float> = List(10) { 0f },
     val bandFrequencies: List<Int> = listOf(30, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 16000),
+    val adaptiveEqualizerEnabled: Boolean = false,
+    val categoryPresetMap: Map<String, String> = SongCategoryTags.defaultPresetByCategory,
     val selectedMetadataProvider: MetadataProvider = MetadataProvider.AUTO,
     val scraping: Boolean = false,
     val eqPanelOpen: Boolean = false,
     val searchKeyword: String = "",
     val scrapeSearchMode: ScrapeSearchMode = ScrapeSearchMode.ALL,
     val aiScraping: Boolean = false,
-    val aiScrapeStatus: AiScrapeStatus? = null
+    val aiScrapeStatus: AiScrapeStatus? = null,
+    val categoryGenerating: Boolean = false,
+    val categoryStatus: AiCategoryStatus? = null
 ) {
     val selectedPreset: EqualizerPreset?
         get() = presets.firstOrNull { it.id == selectedPresetId }
@@ -79,6 +86,12 @@ data class PlayerControlsState(
 enum class AiScrapeStatus {
     API_KEY_REQUIRED,
     NO_SELECTION,
+    FAILED,
+    SAVED
+}
+
+enum class AiCategoryStatus {
+    API_KEY_REQUIRED,
     FAILED,
     SAVED
 }
@@ -95,9 +108,12 @@ class PlayerViewModel @Inject constructor(
     private val musicRepository: MusicRepository,
     private val settingsRepository: SettingsRepository,
     private val aiScrapeMetadataUseCase: AiScrapeMetadataUseCase,
+    private val aiGenerateSongCategoryUseCase: AiGenerateSongCategoryUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     val playbackState: StateFlow<PlaybackState> = playMusicUseCase.observePlayback()
+    val desktopLyricsEnabled: StateFlow<Boolean> = settingsRepository.desktopLyricsEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private var lastPlayStartMs: Long = 0L
     private var lastPlaySongId: String? = null
@@ -139,6 +155,39 @@ class PlayerViewModel @Inject constructor(
         )
     )
     val controlsState: StateFlow<PlayerControlsState> = controls
+    private var latestSongCategoryById: Map<String, String?> = emptyMap()
+
+    init {
+        viewModelScope.launch {
+            settingsRepository.adaptiveEqualizerEnabled.collect { enabled ->
+                controls.update { it.copy(adaptiveEqualizerEnabled = enabled) }
+                if (enabled) applyAdaptiveEqualizer()
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.equalizerCategoryPresets.collect { mappings ->
+                controls.update { it.copy(categoryPresetMap = mappings) }
+                if (controls.value.adaptiveEqualizerEnabled) applyAdaptiveEqualizer()
+            }
+        }
+        viewModelScope.launch {
+            musicRepository.observeSongs()
+                .map { songs -> songs.associate { it.id to it.categoryTag } }
+                .distinctUntilChanged()
+                .collect { categoryById ->
+                    latestSongCategoryById = categoryById
+                    applyAdaptiveEqualizer()
+                }
+        }
+        viewModelScope.launch {
+            playbackState.map { it.currentSong?.id }
+                .distinctUntilChanged()
+                .collect {
+                    controls.update { state -> state.copy(categoryStatus = null) }
+                    applyAdaptiveEqualizer()
+                }
+        }
+    }
 
     fun play(song: Song, queue: List<Song>) {
         playMusicUseCase.play(song, queue)
@@ -174,6 +223,10 @@ class PlayerViewModel @Inject constructor(
         playMusicUseCase.setPlaybackMode(mode)
     }
 
+    fun toggleDesktopLyrics() {
+        context.startService(MusicPlaybackService.toggleDesktopLyricsIntent(context))
+    }
+
     fun seekTo(positionMs: Long) {
         playMusicUseCase.seekTo(positionMs)
         context.startService(MusicPlaybackService.seekIntent(context, positionMs))
@@ -188,18 +241,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun selectPreset(preset: EqualizerPreset) {
-        controls.update { state ->
-            val bandCount = state.bandLevels.size
-            val levels = preset.bandLevels.let { presetLevels ->
-                if (presetLevels.size == bandCount) presetLevels
-                else List(bandCount) { i -> presetLevels.getOrElse(i) { 0f } }
-            }
-            state.copy(
-                selectedPresetId = preset.id,
-                draftName = preset.name,
-                bandLevels = levels
-            )
-        }
+        applyPreset(preset)
     }
 
     fun setDraftName(name: String) {
@@ -207,8 +249,22 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun setBandLevel(index: Int, value: Float) {
+        equalizerController.setBandLevel(index.toShort(), value.toEqualizerBandLevel())
         controls.update { state ->
             state.copy(bandLevels = state.bandLevels.toMutableList().also { it[index] = value })
+        }
+    }
+
+    fun setAdaptiveEqualizerEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setAdaptiveEqualizerEnabled(enabled)
+            if (enabled) applyAdaptiveEqualizer()
+        }
+    }
+
+    fun setCategoryPreset(category: String, presetId: String) {
+        viewModelScope.launch {
+            settingsRepository.setEqualizerCategoryPreset(category, presetId)
         }
     }
 
@@ -225,6 +281,38 @@ class PlayerViewModel @Inject constructor(
                 presets = state.presets + preset,
                 selectedPresetId = id,
                 draftName = name
+            )
+        }
+    }
+
+    private fun applyAdaptiveEqualizer(categoryTag: String? = currentSongCategoryTag()) {
+        val state = controls.value
+        if (!state.adaptiveEqualizerEnabled) return
+        val category = SongCategoryTags.normalize(categoryTag) ?: return
+        val presetId = state.categoryPresetMap[category] ?: SongCategoryTags.defaultPresetByCategory[category] ?: "flat"
+        val preset = state.presets.firstOrNull { it.id == presetId }
+            ?: state.presets.firstOrNull()
+            ?: return
+        applyPreset(preset)
+    }
+
+    private fun currentSongCategoryTag(): String? {
+        val song = playbackState.value.currentSong ?: return null
+        return latestSongCategoryById[song.id] ?: song.categoryTag
+    }
+
+    private fun applyPreset(preset: EqualizerPreset) {
+        val bandCount = controls.value.bandLevels.size
+        val levels = preset.bandLevels.let { presetLevels ->
+            if (presetLevels.size == bandCount) presetLevels
+            else List(bandCount) { i -> presetLevels.getOrElse(i) { 0f } }
+        }
+        equalizerController.setBandLevels(levels.map { it.toEqualizerBandLevel() })
+        controls.update { state ->
+            state.copy(
+                selectedPresetId = preset.id,
+                draftName = preset.name,
+                bandLevels = levels
             )
         }
     }
@@ -389,6 +477,32 @@ class PlayerViewModel @Inject constructor(
             if (scrapeRequestVersion == requestVersion) {
                 controls.update { it.copy(aiScraping = false, aiScrapeStatus = status) }
             }
+        }
+    }
+
+    fun aiGenerateCategoryForCurrentSong() {
+        val song = scrapeBaseSong ?: playbackState.value.currentSong ?: return
+        scrapeBaseSong = song
+        viewModelScope.launch {
+            val apiKey = settingsRepository.aiApiKey.first()
+            val model = settingsRepository.aiModel.first()
+            if (apiKey.isBlank()) {
+                controls.update { it.copy(categoryStatus = AiCategoryStatus.API_KEY_REQUIRED) }
+                return@launch
+            }
+            controls.update { it.copy(categoryGenerating = true, categoryStatus = null) }
+            val status = runCatching {
+                when (val result = aiGenerateSongCategoryUseCase(song, apiKey, model)) {
+                    is AiGenerateSongCategoryResult.Saved -> {
+                        scrapeBaseSong = result.song
+                        playMusicUseCase.previewCurrentSong(result.song)
+                        applyAdaptiveEqualizer(result.song.categoryTag)
+                        AiCategoryStatus.SAVED
+                    }
+                    AiGenerateSongCategoryResult.Failed -> AiCategoryStatus.FAILED
+                }
+            }.getOrElse { AiCategoryStatus.FAILED }
+            controls.update { it.copy(categoryGenerating = false, categoryStatus = status) }
         }
     }
 
@@ -601,6 +715,10 @@ private fun defaultEqualizerPresets(): List<EqualizerPreset> = listOf(
     EqualizerPreset("rock", "Rock", listOf(4f, 4f, 2f, 1f, 0f, 1f, 3f, 4f, 4f, 3f)),
     EqualizerPreset("classical", "Classical", listOf(-2f, -1f, 0f, 0f, 1f, 2f, 3f, 3f, 2f, 1f))
 )
+
+private fun Float.toEqualizerBandLevel(): Short {
+    return (coerceIn(-6f, 6f) * 100f).toInt().toShort()
+}
 
 private fun Song?.toDefaultScrapeKeyword(): String {
     val song = this ?: return ""

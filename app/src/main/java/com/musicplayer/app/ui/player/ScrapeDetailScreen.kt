@@ -77,6 +77,7 @@ fun ScrapeDetailScreen(
     onPrepareScrape: () -> Unit,
     onScrapeCurrent: () -> Unit,
     onAiScrapeCurrent: () -> Unit,
+    onAiGenerateCategory: () -> Unit,
     onSelectScrapeCandidate: (TrackMetadataCandidate?) -> Unit,
     onApplyScrapeSelection: () -> Unit
 ) {
@@ -101,8 +102,9 @@ fun ScrapeDetailScreen(
     val previewCandidate = selectedScrapeCandidate
     val screenListState = rememberLazyListState()
     val showResults = hasResult && !controlsState.scraping && !controlsState.aiScraping
-    val resultItemIndex = 4 +
+    val resultItemIndex = 5 +
         (if (controlsState.aiScrapeStatus != null) 1 else 0) +
+        (if (controlsState.categoryStatus != null) 1 else 0) +
         (if (controlsState.scraping || controlsState.aiScraping) 1 else 0)
 
     LaunchedEffect(song?.id) {
@@ -173,6 +175,14 @@ fun ScrapeDetailScreen(
             }
 
             item {
+                Text(
+                    text = "${strings.songCategory}: ${song?.categoryTag?.takeIf { it.isNotBlank() } ?: strings.noCategory}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            item {
                 Button(
                     onClick = onScrapeCurrent,
                     enabled = !controlsState.scraping && !controlsState.aiScraping && song != null,
@@ -212,6 +222,45 @@ fun ScrapeDetailScreen(
                 }
             }
 
+            item {
+                Button(
+                    onClick = onAiGenerateCategory,
+                    enabled = !controlsState.categoryGenerating && !controlsState.scraping &&
+                        !controlsState.aiScraping && song != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (controlsState.categoryGenerating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Icon(imageVector = Icons.Outlined.Search, contentDescription = null)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (controlsState.categoryGenerating) strings.categoryGenerating else strings.generateSongCategory)
+                }
+            }
+
+            controlsState.categoryStatus?.let { status ->
+                item {
+                    Text(
+                        text = when (status) {
+                            AiCategoryStatus.API_KEY_REQUIRED -> strings.aiKeyRequired
+                            AiCategoryStatus.FAILED -> strings.categoryFailed
+                            AiCategoryStatus.SAVED -> strings.categoryGenerated
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (status == AiCategoryStatus.SAVED) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
+                    )
+                }
+            }
+
             controlsState.aiScrapeStatus?.let { status ->
                 item {
                     Text(
@@ -231,7 +280,7 @@ fun ScrapeDetailScreen(
                 }
             }
 
-            if (controlsState.scraping || controlsState.aiScraping) {
+            if (controlsState.scraping || controlsState.aiScraping || controlsState.categoryGenerating) {
                 item {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }

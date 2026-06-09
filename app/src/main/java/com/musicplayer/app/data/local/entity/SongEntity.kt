@@ -37,6 +37,7 @@ data class SongEntity(
     val sampleRateHz: Int?,
     val releaseYear: Int?,
     val releaseMonth: Int?,
+    val categoryTag: String?,
     val dateAddedEpochMs: Long,
     val isFavorite: Boolean
 )
@@ -63,6 +64,7 @@ fun SongEntity.toDomain(): Song = Song(
     sampleRateHz = sampleRateHz,
     releaseYear = releaseYear,
     releaseMonth = releaseMonth,
+    categoryTag = categoryTag,
     dateAddedEpochMs = dateAddedEpochMs,
     isFavorite = isFavorite
 )
@@ -89,6 +91,7 @@ fun Song.toEntity(): SongEntity = SongEntity(
     sampleRateHz = sampleRateHz,
     releaseYear = releaseYear,
     releaseMonth = releaseMonth,
+    categoryTag = categoryTag,
     dateAddedEpochMs = dateAddedEpochMs,
     isFavorite = isFavorite
 )

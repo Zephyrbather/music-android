@@ -5,6 +5,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,14 +13,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -40,9 +47,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,60 +67,84 @@ import com.musicplayer.app.ui.i18n.ThemeStyleTitle
 
 @Composable
 fun SettingsScreen(
+    onNavigateToAppearance: () -> Unit = {},
+    onNavigateToLocalLibrary: () -> Unit = {},
+    onNavigateToScraping: () -> Unit = {},
+    onNavigateToCache: () -> Unit = {},
+    onNavigateToDataManagement: () -> Unit = {},
     onNavigateToWebDav: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    SettingsPage(
+        title = strings.settings,
+        onBack = null,
+        modifier = modifier
+    ) {
+        item {
+            SettingsCategoryRow(
+                title = strings.theme,
+                description = "${strings.language} / ${strings.fontSetting} / ${strings.dynamicColor}",
+                icon = Icons.Outlined.Settings,
+                onClick = onNavigateToAppearance
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.localLibrary,
+                description = strings.autoScanDesc,
+                icon = Icons.Outlined.FolderOpen,
+                onClick = onNavigateToLocalLibrary
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.scraping,
+                description = strings.scrapingDesc,
+                icon = Icons.Outlined.Search,
+                onClick = onNavigateToScraping
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.cache,
+                description = "${strings.imageCache} / ${strings.artworkCache} / ${strings.scrapeCache}",
+                icon = Icons.Outlined.RemoveCircleOutline,
+                onClick = onNavigateToCache
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.dataManagement,
+                description = "${strings.exportData} / ${strings.importData}",
+                icon = Icons.Outlined.FileUpload,
+                onClick = onNavigateToDataManagement
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.webdav,
+                description = strings.webdavDesc,
+                icon = Icons.Outlined.Cloud,
+                onClick = onNavigateToWebDav
+            )
+        }
+    }
+}
+
+@Composable
+fun AppearanceSettingsScreen(
+    onBack: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val workState by viewModel.workState.collectAsStateWithLifecycle()
-    val hasResumableScrape by viewModel.hasResumableScrape.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
-    val context = LocalContext.current
-    val folderPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-        runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
-        viewModel.addLocalScanFolder(uri.toString())
-    }
-
-    val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri != null) viewModel.exportData(uri)
-    }
-
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) viewModel.importData(uri)
-    }
-
-    val result by viewModel.exportImportResult.collectAsStateWithLifecycle()
-    LaunchedEffect(result) {
-        result?.let { key ->
-            val msg = when (key) {
-                "export_success" -> strings.exportSuccess
-                "import_success" -> strings.importSuccess
-                else -> "Failed"
-            }
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-            viewModel.clearExportImportResult()
-        }
-    }
-
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
+    SettingsPage(
+        title = strings.theme,
+        onBack = onBack,
+        modifier = modifier
     ) {
-        item {
-            Text(
-                text = strings.settings,
-                style = MaterialTheme.typography.headlineSmall
-            )
-        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(text = strings.language, style = MaterialTheme.typography.titleMedium)
@@ -195,71 +227,121 @@ fun SettingsScreen(
                 onCheckedChange = viewModel::setEditorialLayout
             )
         }
+    }
+}
+
+@Composable
+fun LocalLibrarySettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val workState by viewModel.workState.collectAsStateWithLifecycle()
+    val strings = LocalStrings.current
+    val context = LocalContext.current
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+        viewModel.addLocalScanFolder(uri.toString())
+    }
+
+    SettingsPage(
+        title = strings.localLibrary,
+        onBack = onBack,
+        modifier = modifier
+    ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = strings.localLibrary, style = MaterialTheme.typography.titleMedium)
-                SettingSwitchRow(
-                    title = strings.autoScan,
-                    description = strings.autoScanDesc,
-                    checked = state.autoScanLocalLibrary,
-                    onCheckedChange = viewModel::setAutoScanLocalLibrary
+            SettingSwitchRow(
+                title = strings.autoScan,
+                description = strings.autoScanDesc,
+                checked = state.autoScanLocalLibrary,
+                onCheckedChange = viewModel::setAutoScanLocalLibrary
+            )
+        }
+        item {
+            Button(
+                onClick = viewModel::scanNow,
+                enabled = !workState.running,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(strings.scan)
+            }
+        }
+        if (workState.type == LibraryWorkType.SCAN && (workState.running || workState.lastResult != null)) {
+            item {
+                WorkProgressPanel(
+                    workState = workState,
+                    runningText = strings.scanRunning,
+                    finishedText = "${strings.scanFinishedPrefix}${workState.discovered}${strings.scanFinishedSuffix}"
                 )
-                Button(
-                    onClick = viewModel::scanNow,
-                    enabled = !workState.running,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(strings.scan)
-                }
-                if (workState.type == LibraryWorkType.SCAN && (workState.running || workState.lastResult != null)) {
-                    WorkProgressPanel(
-                        workState = workState,
-                        runningText = strings.scanRunning,
-                        finishedText = "${strings.scanFinishedPrefix}${workState.discovered}${strings.scanFinishedSuffix}"
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = strings.scanFolders,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Button(onClick = { folderPicker.launch(null) }) {
-                        Icon(imageVector = Icons.Outlined.FolderOpen, contentDescription = null)
-                        Text(text = strings.addFolder)
-                    }
-                }
-                if (state.localScanFolderUris.isEmpty()) {
-                    Text(
-                        text = strings.noFolders,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    state.localScanFolderUris.forEach { folderUri ->
-                        FolderRow(
-                            uri = folderUri,
-                            removeLabel = strings.remove,
-                            onRemove = {
-                                runCatching {
-                                    context.contentResolver.releasePersistableUriPermission(
-                                        Uri.parse(folderUri),
-                                        Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                    )
-                                }
-                                viewModel.removeLocalScanFolder(folderUri)
-                            }
-                        )
-                    }
-                }
             }
         }
         item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = strings.scanFolders,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = { folderPicker.launch(null) }) {
+                    Icon(imageVector = Icons.Outlined.FolderOpen, contentDescription = null)
+                    Text(text = strings.addFolder)
+                }
+            }
+        }
+        if (state.localScanFolderUris.isEmpty()) {
+            item {
+                Text(
+                    text = strings.noFolders,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            items(state.localScanFolderUris) { folderUri ->
+                FolderRow(
+                    uri = folderUri,
+                    removeLabel = strings.remove,
+                    onRemove = {
+                        runCatching {
+                            context.contentResolver.releasePersistableUriPermission(
+                                Uri.parse(folderUri),
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        viewModel.removeLocalScanFolder(folderUri)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ScrapingSettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val workState by viewModel.workState.collectAsStateWithLifecycle()
+    val hasResumableScrape by viewModel.hasResumableScrape.collectAsStateWithLifecycle()
+    val strings = LocalStrings.current
+
+    SettingsPage(
+        title = strings.scraping,
+        onBack = onBack,
+        modifier = modifier
+    ) {
+        item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = strings.scraping, style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = strings.scrapingDesc,
                     style = MaterialTheme.typography.bodyMedium,
@@ -272,6 +354,10 @@ fun SettingsScreen(
                 )
                 AssistChip(onClick = {}, label = { Text(strings.lyricsSources) })
                 AssistChip(onClick = {}, label = { Text(strings.artworkSources) })
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(text = strings.aiScraping, style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AiProvider.values().forEach { provider ->
@@ -311,135 +397,317 @@ fun SettingsScreen(
                 ) {
                     Text(strings.saveAiSettings)
                 }
-                SettingSwitchRow(
-                    title = strings.autoScrape,
-                    description = strings.autoScrapeDesc,
-                    checked = state.autoScrape,
-                    onCheckedChange = viewModel::setAutoScrape
-                )
-                SettingSwitchRow(
-                    title = strings.backgroundAiScrape,
-                    description = strings.backgroundAiScrapeDesc,
-                    checked = state.backgroundAiScrape,
-                    onCheckedChange = viewModel::setBackgroundAiScrape,
-                    enabled = state.aiApiKey.isNotBlank() || state.backgroundAiScrape
-                )
+            }
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.autoScrape,
+                description = strings.autoScrapeDesc,
+                checked = state.autoScrape,
+                onCheckedChange = viewModel::setAutoScrape
+            )
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.backgroundAiScrape,
+                description = strings.backgroundAiScrapeDesc,
+                checked = state.backgroundAiScrape,
+                onCheckedChange = viewModel::setBackgroundAiScrape,
+                enabled = state.aiApiKey.isNotBlank() || state.backgroundAiScrape
+            )
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.aiCategoryScrape,
+                description = strings.aiCategoryScrapeDesc,
+                checked = state.aiCategoryScrape,
+                onCheckedChange = viewModel::setAiCategoryScrape,
+                enabled = state.aiApiKey.isNotBlank() || state.aiCategoryScrape
+            )
+        }
+        item {
+            Button(
+                onClick = viewModel::scrapeMissingMetadata,
+                enabled = !workState.running,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(strings.scrapeAllMissing)
+            }
+        }
+        if (hasResumableScrape && !workState.running) {
+            item {
                 Button(
-                    onClick = viewModel::scrapeMissingMetadata,
-                    enabled = !workState.running,
+                    onClick = viewModel::resumeScrape,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(strings.scrapeAllMissing)
+                    Text(strings.scrapeResume)
                 }
-                if (hasResumableScrape && !workState.running) {
-                    Button(
-                        onClick = viewModel::resumeScrape,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(strings.scrapeResume)
+            }
+        }
+        if (workState.type == LibraryWorkType.SCRAPE && (workState.running || workState.lastResult != null)) {
+            item {
+                val finishedSkipped = (workState.total - workState.updated - workState.failed).coerceAtLeast(0)
+                val runningSkipped = (workState.completed - workState.updated - workState.failed).coerceAtLeast(0)
+                val finishedText = "${strings.scrapeFinishedPrefix}${workState.updated}" +
+                    "${strings.scrapeFinishedSkippedMiddle}${finishedSkipped}" +
+                    "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
+                WorkProgressPanel(
+                    workState = workState,
+                    runningText = strings.scrapeRunning,
+                    finishedText = finishedText,
+                    supportingText = if (workState.running) {
+                        "${strings.scrapeBackgroundHint}\n${strings.scrapeFinishedPrefix}${workState.updated}" +
+                            "${strings.scrapeFinishedSkippedMiddle}${runningSkipped}" +
+                            "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
+                    } else {
+                        null
                     }
-                }
-                if (workState.type == LibraryWorkType.SCRAPE && (workState.running || workState.lastResult != null)) {
-                    val finishedSkipped = (workState.total - workState.updated - workState.failed).coerceAtLeast(0)
-                    val runningSkipped = (workState.completed - workState.updated - workState.failed).coerceAtLeast(0)
-                    val finishedText = "${strings.scrapeFinishedPrefix}${workState.updated}" +
-                        "${strings.scrapeFinishedSkippedMiddle}${finishedSkipped}" +
-                        "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
-                    WorkProgressPanel(
-                        workState = workState,
-                        runningText = strings.scrapeRunning,
-                        finishedText = finishedText,
-                        supportingText = if (workState.running) {
-                            "${strings.scrapeBackgroundHint}\n${strings.scrapeFinishedPrefix}${workState.updated}" +
-                                "${strings.scrapeFinishedSkippedMiddle}${runningSkipped}" +
-                                "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
-                        } else {
-                            null
-                        }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CacheSettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel()
+) {
+    val strings = LocalStrings.current
+    val imageSize by viewModel.imageCacheSize.collectAsStateWithLifecycle()
+    val artworkSize by viewModel.artworkCacheSize.collectAsStateWithLifecycle()
+    val scrapeCount by viewModel.scrapeCacheEntries.collectAsStateWithLifecycle()
+    val clearing by viewModel.clearingCache.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadCacheSizes()
+    }
+
+    SettingsPage(
+        title = strings.cache,
+        onBack = onBack,
+        modifier = modifier
+    ) {
+        item {
+            CacheRow(
+                label = strings.imageCache,
+                value = imageSize ?: "...",
+                onClear = viewModel::clearImageCache,
+                enabled = imageSize != "0 B" && imageSize != null && imageSize != "..."
+            )
+        }
+        item {
+            CacheRow(
+                label = strings.artworkCache,
+                value = artworkSize ?: "...",
+                onClear = viewModel::clearArtworkCache,
+                enabled = artworkSize != "0 B" && artworkSize != null && artworkSize != "..."
+            )
+        }
+        item {
+            CacheRow(
+                label = strings.scrapeCache,
+                value = scrapeCount?.let { "$it${strings.entries}" } ?: "...",
+                onClear = viewModel::clearScrapeCache,
+                enabled = (scrapeCount ?: 0) > 0
+            )
+        }
+        item {
+            Button(
+                onClick = viewModel::clearAllCache,
+                enabled = !clearing,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (clearing) strings.clearingCache else strings.clearCache)
+            }
+        }
+    }
+}
+
+@Composable
+fun DataManagementSettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel()
+) {
+    val strings = LocalStrings.current
+    val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) viewModel.exportData(uri)
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) viewModel.importData(uri)
+    }
+    val result by viewModel.exportImportResult.collectAsStateWithLifecycle()
+
+    LaunchedEffect(result) {
+        result?.let { key ->
+            val msg = when (key) {
+                "export_success" -> strings.exportSuccess
+                "import_success" -> strings.importSuccess
+                else -> "Failed"
+            }
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearExportImportResult()
+        }
+    }
+
+    SettingsPage(
+        title = strings.dataManagement,
+        onBack = onBack,
+        modifier = modifier
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { exportLauncher.launch("musicplayer_backup.json") },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.FileUpload,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
                     )
+                    Text(strings.exportData)
                 }
-            }
-        }
-        item {
-            val imageSize by viewModel.imageCacheSize.collectAsStateWithLifecycle()
-            val artworkSize by viewModel.artworkCacheSize.collectAsStateWithLifecycle()
-            val scrapeCount by viewModel.scrapeCacheEntries.collectAsStateWithLifecycle()
-            val clearing by viewModel.clearingCache.collectAsStateWithLifecycle()
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = strings.cache, style = MaterialTheme.typography.titleMedium)
-                CacheRow(
-                    label = strings.imageCache,
-                    value = imageSize ?: "...",
-                    onClear = viewModel::clearImageCache,
-                    enabled = imageSize != "0 B" && imageSize != null && imageSize != "..."
-                )
-                CacheRow(
-                    label = strings.artworkCache,
-                    value = artworkSize ?: "...",
-                    onClear = viewModel::clearArtworkCache,
-                    enabled = artworkSize != "0 B" && artworkSize != null && artworkSize != "..."
-                )
-                CacheRow(
-                    label = strings.scrapeCache,
-                    value = scrapeCount?.let { "$it${strings.entries}" } ?: "...",
-                    onClear = viewModel::clearScrapeCache,
-                    enabled = (scrapeCount ?: 0) > 0
-                )
-                Button(
-                    onClick = viewModel::clearAllCache,
-                    enabled = !clearing,
-                    modifier = Modifier.fillMaxWidth()
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json")) },
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (clearing) strings.clearingCache else strings.clearCache)
+                    Icon(
+                        imageVector = Icons.Outlined.FileDownload,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(strings.importData)
                 }
             }
         }
+    }
+}
+
+@Composable
+fun WebDavSettingsScreen(
+    onBack: () -> Unit,
+    onManageWebDav: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    SettingsPage(
+        title = strings.webdav,
+        onBack = onBack,
+        modifier = modifier
+    ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = strings.dataManagement, style = MaterialTheme.typography.titleMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { exportLauncher.launch("musicplayer_backup.json") },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.FileUpload,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(strings.exportData)
-                    }
-                    OutlinedButton(
-                        onClick = { importLauncher.launch(arrayOf("application/json")) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.FileDownload,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(strings.importData)
-                    }
-                }
-            }
+            Text(
+                text = strings.webdavDesc,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = strings.webdav, style = MaterialTheme.typography.titleMedium)
+            Button(
+                onClick = onManageWebDav,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(strings.manageWebDav)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage(
+    title: String,
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    content: LazyListScope.() -> Unit
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        item {
+            SettingsTopBar(title = title, onBack = onBack)
+        }
+        content()
+    }
+}
+
+@Composable
+private fun SettingsTopBar(
+    title: String,
+    onBack: (() -> Unit)?
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(imageVector = Icons.Outlined.ArrowBack, contentDescription = null)
+            }
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun SettingsCategoryRow(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = strings.webdavDesc,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Button(
-                    onClick = onNavigateToWebDav,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(strings.manageWebDav)
-                }
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

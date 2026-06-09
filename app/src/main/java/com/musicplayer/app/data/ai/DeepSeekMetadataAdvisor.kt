@@ -2,6 +2,7 @@ package com.musicplayer.app.data.ai
 
 import com.musicplayer.app.domain.ai.AiMetadataAdvisor
 import com.musicplayer.app.domain.ai.AiSongIdentity
+import com.musicplayer.app.domain.model.SongCategoryTags
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.TrackMetadataCandidate
 import javax.inject.Inject
@@ -80,6 +81,29 @@ class DeepSeekMetadataAdvisor @Inject constructor(
             userPrompt = input.toString()
         ) ?: return null
         return candidates.getOrNull(result.optInt("selectedIndex", -1))
+    }
+
+    override suspend fun classifySong(
+        song: Song,
+        apiKey: String,
+        model: String,
+        categories: List<String>
+    ): String? {
+        val input = JSONObject().apply {
+            put("title", song.title)
+            put("artist", song.artistName)
+            put("album", song.albumTitle)
+            put("fileName", song.uri.substringAfterLast('/'))
+            put("categories", JSONArray(categories))
+        }
+        val result = completeJson(
+            apiKey = apiKey,
+            model = model,
+            systemPrompt = "Classify the music track into exactly one category from the provided categories. " +
+                "Use the best equalizer-oriented category. Return JSON only with category.",
+            userPrompt = input.toString()
+        ) ?: return null
+        return SongCategoryTags.normalize(result.optString("category"))
     }
 
     private suspend fun completeJson(

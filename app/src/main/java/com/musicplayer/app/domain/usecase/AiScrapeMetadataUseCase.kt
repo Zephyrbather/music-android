@@ -29,7 +29,8 @@ class AiScrapeMetadataUseCase @Inject constructor(
         song: Song,
         apiKey: String,
         model: String,
-        renameLocalFile: Boolean = true
+        renameLocalFile: Boolean = true,
+        rebuildLibraryArtwork: Boolean = true
     ): AiMetadataScrapeResult {
         val identity = aiMetadataAdvisor.identifySong(song, apiKey, model)
             ?: return AiMetadataScrapeResult.Failed
@@ -42,7 +43,8 @@ class AiScrapeMetadataUseCase @Inject constructor(
         val saved = musicRepository.saveScrapedMetadata(
             song = selected.applyTo(song),
             mode = ScrapeSearchMode.ALL,
-            renameLocalFile = renameLocalFile
+            renameLocalFile = renameLocalFile,
+            rebuildLibraryArtwork = rebuildLibraryArtwork
         )
         return AiMetadataScrapeResult.Saved(candidates, selected, saved)
     }

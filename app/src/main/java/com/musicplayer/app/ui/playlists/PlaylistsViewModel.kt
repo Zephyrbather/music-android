@@ -13,6 +13,7 @@ import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Calendar
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class PlaylistsUiState(
     val playlists: List<Playlist> = emptyList()
@@ -106,27 +108,30 @@ class PlaylistsViewModel @Inject constructor(
 
     fun loadRankings(period: RankingPeriod = _rankingPeriod.value) {
         viewModelScope.launch {
-            val cal = Calendar.getInstance()
-            cal.set(Calendar.HOUR_OF_DAY, 0)
-            cal.set(Calendar.MINUTE, 0)
-            cal.set(Calendar.SECOND, 0)
-            cal.set(Calendar.MILLISECOND, 0)
-            when (period) {
-                RankingPeriod.DAILY -> {} // today at 00:00
-                RankingPeriod.WEEKLY -> cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
-                RankingPeriod.MONTHLY -> cal.set(Calendar.DAY_OF_MONTH, 1)
-                RankingPeriod.YEARLY -> {
-                    cal.set(Calendar.MONTH, Calendar.JANUARY)
-                    cal.set(Calendar.DAY_OF_MONTH, 1)
+            val rankings = withContext(Dispatchers.IO) {
+                val cal = Calendar.getInstance()
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                when (period) {
+                    RankingPeriod.DAILY -> {} // today at 00:00
+                    RankingPeriod.WEEKLY -> cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
+                    RankingPeriod.MONTHLY -> cal.set(Calendar.DAY_OF_MONTH, 1)
+                    RankingPeriod.YEARLY -> {
+                        cal.set(Calendar.MONTH, Calendar.JANUARY)
+                        cal.set(Calendar.DAY_OF_MONTH, 1)
+                    }
+                }
+                val sinceMs = cal.timeInMillis
+                val counts = playRecordDao.topSongsSince(sinceMs)
+                val songs = songDao.getSongs()
+                val songById = songs.associate { it.id to it.toDomain() }
+                counts.mapNotNull { count ->
+                    songById[count.songId]?.let { RankedSong(it, count.totalMs) }
                 }
             }
-            val sinceMs = cal.timeInMillis
-            val counts = playRecordDao.topSongsSince(sinceMs)
-            val songs = songDao.getSongs()
-            val songById = songs.associate { it.id to it.toDomain() }
-            _rankedSongs.value = counts.mapNotNull { count ->
-                songById[count.songId]?.let { RankedSong(it, count.totalMs) }
-            }
+            _rankedSongs.value = rankings
         }
     }
 

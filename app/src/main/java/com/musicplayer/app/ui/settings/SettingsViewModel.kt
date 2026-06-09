@@ -40,6 +40,7 @@ data class SettingsUiState(
     val autoScanLocalLibrary: Boolean = false,
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
+    val aiCategoryScrape: Boolean = false,
     val aiProvider: AiProvider = AiProvider.DEEPSEEK,
     val aiApiKey: String = "",
     val aiModel: String = "deepseek-v4-flash",
@@ -86,13 +87,24 @@ class SettingsViewModel @Inject constructor(
     }
 
     private val scrapingState = combine(
-        settingsRepository.autoScrapeEnabled,
-        settingsRepository.backgroundAiScrapeEnabled,
-        settingsRepository.aiProvider,
-        settingsRepository.aiApiKey,
+        combine(
+            settingsRepository.autoScrapeEnabled,
+            settingsRepository.backgroundAiScrapeEnabled,
+            settingsRepository.aiCategoryScrapeEnabled,
+            settingsRepository.aiProvider,
+            settingsRepository.aiApiKey
+        ) { autoScrape, backgroundAiScrape, aiCategoryScrape, aiProvider, aiApiKey ->
+            ScrapingSettings(
+                autoScrape = autoScrape,
+                backgroundAiScrape = backgroundAiScrape,
+                aiCategoryScrape = aiCategoryScrape,
+                aiProvider = aiProvider,
+                aiApiKey = aiApiKey
+            )
+        },
         settingsRepository.aiModel
-    ) { autoScrape, backgroundAiScrape, aiProvider, aiApiKey, aiModel ->
-        ScrapingSettings(autoScrape, backgroundAiScrape, aiProvider, aiApiKey, aiModel)
+    ) { scraping, aiModel ->
+        scraping.copy(aiModel = aiModel)
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScrapingSettings())
 
@@ -110,6 +122,7 @@ class SettingsViewModel @Inject constructor(
             autoScanLocalLibrary = library.autoScan,
             autoScrape = scraping.autoScrape,
             backgroundAiScrape = scraping.backgroundAiScrape,
+            aiCategoryScrape = scraping.aiCategoryScrape,
             aiProvider = scraping.aiProvider,
             aiApiKey = scraping.aiApiKey,
             aiModel = scraping.aiModel,
@@ -267,6 +280,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setAiCategoryScrape(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled || settingsRepository.aiApiKey.first().isNotBlank()) {
+                settingsRepository.setAiCategoryScrapeEnabled(enabled)
+            }
+        }
+    }
+
     fun saveAiSettings(provider: AiProvider, apiKey: String, model: String) {
         viewModelScope.launch {
             settingsRepository.setAiProvider(provider)
@@ -274,6 +295,7 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setAiModel(model)
             if (apiKey.isBlank()) {
                 settingsRepository.setBackgroundAiScrapeEnabled(false)
+                settingsRepository.setAiCategoryScrapeEnabled(false)
             }
         }
     }
@@ -340,6 +362,7 @@ private data class LibrarySettings(
 private data class ScrapingSettings(
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
+    val aiCategoryScrape: Boolean = false,
     val aiProvider: AiProvider = AiProvider.DEEPSEEK,
     val aiApiKey: String = "",
     val aiModel: String = "deepseek-v4-flash"

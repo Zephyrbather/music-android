@@ -3,8 +3,9 @@ package com.musicplayer.app.ui.library
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,24 +65,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.musicplayer.app.domain.model.Album
 import com.musicplayer.app.domain.model.Artist
 import com.musicplayer.app.domain.model.Playlist
@@ -93,6 +93,7 @@ import com.musicplayer.app.domain.model.formatReleaseDate
 import com.musicplayer.app.ui.components.AlbumCard
 import com.musicplayer.app.ui.components.EditSongDialog
 import com.musicplayer.app.ui.components.FastScrollIndex
+import com.musicplayer.app.ui.components.SongActionHeader
 import com.musicplayer.app.ui.components.SongArtwork
 import com.musicplayer.app.ui.components.libraryDetailLabel
 import com.musicplayer.app.ui.i18n.LocalStrings
@@ -266,14 +267,8 @@ private fun SongList(
     var removeSong by remember { mutableStateOf<Song?>(null) }
     var deleteFileSong by remember { mutableStateOf<Song?>(null) }
     val alphabet = remember { ('A'..'Z').map { it.toString() } + "#" }
-    val songLetters = remember(state.songs) {
-        state.songs.map { it.title.indexLetter() }
-    }
-    val firstIndexByLetter = remember(state.songs) {
-        state.songs.mapIndexed { index, song -> song.title.indexLetter() to index }
-            .groupBy({ it.first }, { it.second })
-            .mapValues { it.value.first() }
-    }
+    val songLetters = state.songIndexLetters
+    val firstIndexByLetter = state.firstSongIndexByLetter
     val currentLetter by remember(listState, songLetters) {
         derivedStateOf {
             songLetters.getOrNull(listState.firstVisibleItemIndex)
@@ -289,7 +284,11 @@ private fun SongList(
                 contentPadding = PaddingValues(start = 20.dp, top = 20.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(state.songs, key = { it.id }) { song ->
+                items(
+                    items = state.songs,
+                    key = { it.id },
+                    contentType = { "library-song" }
+                ) { song ->
                     LibrarySongRow(
                         song = song,
                         onDoubleTap = { onPlaySong(song, state.songs) },
@@ -449,50 +448,33 @@ private fun SongList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibrarySongRow(
     song: Song,
     onDoubleTap: () -> Unit,
     onMoreClick: (() -> Unit)? = null
 ) {
-    var pressed by remember { mutableStateOf(false) }
-    var tapped by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = tween(120),
-        label = "press"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = if (tapped) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(300),
-        label = "tap"
-    )
-
-    LaunchedEffect(tapped) {
-        if (tapped) {
-            kotlinx.coroutines.delay(400)
-            tapped = false
-        }
+    val detailLabel = remember(
+        song.id,
+        song.qualityLabel,
+        song.artistName,
+        song.albumTitle,
+        song.durationMs,
+        song.categoryTag
+    ) {
+        song.libraryDetailLabel()
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .scale(scale)
-            .background(bgColor, MaterialTheme.shapes.medium)
+            .background(Color.Transparent, MaterialTheme.shapes.medium)
             .clip(MaterialTheme.shapes.medium)
-            .pointerInput(song.id) {
-                detectTapGestures(
-                    onTap = { tapped = true },
-                    onDoubleTap = { onDoubleTap() },
-                    onPress = {
-                        pressed = true
-                        tryAwaitRelease()
-                        pressed = false
-                    }
-                )
-            }
+            .combinedClickable(
+                onClick = {},
+                onDoubleClick = onDoubleTap
+            )
             .padding(horizontal = 2.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -506,7 +488,7 @@ private fun LibrarySongRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = song.libraryDetailLabel(),
+                text = detailLabel,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -546,13 +528,7 @@ private fun SongActionSheet(
 ) {
     val strings = LocalStrings.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(
-            text = song.title,
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        SongActionHeader(song = song)
         ListItem(
             headlineContent = { Text(strings.addToNext) },
             leadingContent = { Icon(Icons.Outlined.QueueMusic, contentDescription = null) },
@@ -738,7 +714,11 @@ private fun AlbumList(
                 )
             }
         }
-        items(state.albums, key = { it.id }) { album ->
+        items(
+            items = state.albums,
+            key = { it.id },
+            contentType = { "library-album" }
+        ) { album ->
             AlbumCard(
                 album = album,
                 onClick = { onOpenAlbum(album.id) },
@@ -787,15 +767,6 @@ private fun AlbumSortChip(
     )
 }
 
-private fun String.indexLetter(): String {
-    val trimmed = trim()
-    val first = trimmed.firstOrNull() ?: return "#"
-    if (first in '0'..'9') return "#"
-    if (first in 'A'..'Z') return first.toString()
-    if (first in 'a'..'z') return first.uppercaseChar().toString()
-    return PinyinHelper.toPinyinInitial(first) ?: "#"
-}
-
 @Composable
 private fun ArtistList(
     state: LibraryUiState,
@@ -805,12 +776,8 @@ private fun ArtistList(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val alphabet = remember { ('A'..'Z').map { it.toString() } + "#" }
-    val artistLetters = remember(state.artists) { state.artists.map { it.name.indexLetter() } }
-    val firstIndexByLetter = remember(state.artists) {
-        state.artists.mapIndexed { index, artist -> artist.name.indexLetter() to index }
-            .groupBy({ it.first }, { it.second })
-            .mapValues { it.value.first() }
-    }
+    val artistLetters = state.artistIndexLetters
+    val firstIndexByLetter = state.firstArtistIndexByLetter
     val currentLetter by remember(listState, artistLetters) {
         derivedStateOf { artistLetters.getOrNull(listState.firstVisibleItemIndex) }
     }
@@ -822,7 +789,11 @@ private fun ArtistList(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(state.artists, key = { it.id }) { artist ->
+                items(
+                    items = state.artists,
+                    key = { it.id },
+                    contentType = { "library-artist" }
+                ) { artist ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -891,8 +862,12 @@ fun ArtistDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val artistInfoState by artistInfoViewModel.uiState.collectAsStateWithLifecycle()
-    val artist = state.artists.firstOrNull { it.id == artistId }
-    val songs = state.songs.filter { it.artistGroupingId() == artistId }
+    val artist = remember(state.artists, artistId) {
+        state.artists.firstOrNull { it.id == artistId }
+    }
+    val songs = remember(state.songs, artistId) {
+        state.songs.filter { it.artistGroupingId() == artistId }
+    }
 
     LaunchedEffect(artist?.name) {
         artist?.name?.let { artistInfoViewModel.load(it) }
@@ -919,7 +894,11 @@ fun ArtistDetailScreen(
                 }
             )
         }
-        items(songs, key = { it.id }) { song ->
+        items(
+            items = songs,
+            key = { it.id },
+            contentType = { "artist-song" }
+        ) { song ->
             DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
         }
     }
@@ -934,8 +913,12 @@ fun AlbumDetailScreen(
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val album = state.albums.firstOrNull { it.id == albumId }
-    val songs = state.songs.filter { it.albumGroupingId() == albumId }
+    val album = remember(state.albums, albumId) {
+        state.albums.firstOrNull { it.id == albumId }
+    }
+    val songs = remember(state.songs, albumId) {
+        state.songs.filter { it.albumGroupingId() == albumId }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -951,7 +934,11 @@ fun AlbumDetailScreen(
         item {
             AlbumHeader(album = album, songs = songs)
         }
-        items(songs, key = { it.id }) { song ->
+        items(
+            items = songs,
+            key = { it.id },
+            contentType = { "album-song" }
+        ) { song ->
             DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
         }
     }
@@ -994,7 +981,8 @@ private fun ArtistHeader(
     ) {
         ArtistAvatar(
             artworkUri = onlineInfo?.avatarUri ?: artist?.artworkUri,
-            modifier = Modifier.size(88.dp)
+            modifier = Modifier.size(88.dp),
+            imageSize = 88.dp
         )
         Column(
             modifier = Modifier.weight(1f),
@@ -1051,34 +1039,42 @@ private fun AlbumHeader(
     songs: List<Song>
 ) {
     val strings = LocalStrings.current
+    val artworkSize = 88.dp
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .size(88.dp)
-                .clip(MaterialTheme.shapes.medium),
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.primaryContainer
+                .size(artworkSize)
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
         ) {
             if (!album?.artworkUri.isNullOrBlank()) {
+                val context = LocalContext.current
+                val imageSizePx = with(LocalDensity.current) { artworkSize.roundToPx().coerceAtLeast(1) }
+                val imageRequest = remember(context, album?.artworkUri, imageSizePx) {
+                    ImageRequest.Builder(context)
+                        .data(album?.artworkUri)
+                        .size(imageSizePx, imageSizePx)
+                        .crossfade(false)
+                        .build()
+                }
                 AsyncImage(
-                    model = album?.artworkUri,
+                    model = imageRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Outlined.Album,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Outlined.Album,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(40.dp)
+                )
             }
         }
         Column(
@@ -1110,29 +1106,38 @@ private fun AlbumHeader(
 @Composable
 private fun ArtistAvatar(
     artworkUri: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    imageSize: Dp = 48.dp
 ) {
-    Surface(
-        modifier = modifier.clip(MaterialTheme.shapes.large),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.secondaryContainer
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+        contentAlignment = Alignment.Center
     ) {
         if (!artworkUri.isNullOrBlank()) {
+            val context = LocalContext.current
+            val imageSizePx = with(LocalDensity.current) { imageSize.roundToPx().coerceAtLeast(1) }
+            val imageRequest = remember(context, artworkUri, imageSizePx) {
+                ImageRequest.Builder(context)
+                    .data(artworkUri)
+                    .size(imageSizePx, imageSizePx)
+                    .crossfade(false)
+                    .build()
+            }
             AsyncImage(
-                model = artworkUri,
+                model = imageRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Outlined.Person,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+            Icon(
+                imageVector = Icons.Outlined.Person,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(28.dp)
+            )
         }
     }
 }
@@ -1214,7 +1219,7 @@ private fun SearchDialog(
                             color = MaterialTheme.colorScheme.surface
                         ) {
                             Row(modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                SongArtwork(song = song, modifier = Modifier.size(36.dp))
+                                SongArtwork(song = song, modifier = Modifier.size(36.dp), imageSize = 36.dp)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(song.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -7,6 +7,7 @@ import com.musicplayer.app.data.local.dao.PlayRecordDao
 import com.musicplayer.app.domain.model.Album
 import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.domain.model.Source
 import com.musicplayer.app.domain.model.WebDavServer
 import com.musicplayer.app.domain.model.hasUnresolvedAlbumTitle
 import com.musicplayer.app.domain.repository.MusicRepository
@@ -18,15 +19,21 @@ import com.musicplayer.app.domain.usecase.LibraryWorkCoordinator
 import com.musicplayer.app.domain.usecase.LibraryWorkState
 import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
+import com.musicplayer.app.ui.library.DownloadProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.File
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 data class HomeUiState(
@@ -34,15 +41,14 @@ data class HomeUiState(
     val albums: List<Album> = emptyList(),
     val servers: List<WebDavServer> = emptyList(),
     val isScanning: Boolean = false,
-    val recommendedSongs: List<Song> = emptyList()
-) {
-    val recentSongs: List<Song> = songs.sortedByDescending { it.dateAddedEpochMs }.take(6)
-}
+    val recommendedSongs: List<Song> = emptyList(),
+    val recentSongs: List<Song> = emptyList()
+)
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val musicRepository: MusicRepository,
-    webDavRepository: WebDavRepository,
+    private val webDavRepository: WebDavRepository,
     private val settingsRepository: SettingsRepository,
     private val fetchMetadataUseCase: FetchMetadataUseCase,
     private val libraryWorkCoordinator: LibraryWorkCoordinator,
@@ -61,12 +67,18 @@ class HomeViewModel @Inject constructor(
             songs = songs,
             albums = albums,
             servers = servers,
-            recommendedSongs = buildRecommendedSongs(songs)
+            recommendedSongs = buildRecommendedSongs(songs),
+            recentSongs = songs.sortedByDescending { it.dateAddedEpochMs }.take(6)
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     val playlists: StateFlow<List<Playlist>> = playlistRepository.observePlaylists()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _downloadProgress = MutableStateFlow(DownloadProgress())
+    val downloadProgress: StateFlow<DownloadProgress> = _downloadProgress.asStateFlow()
 
     val workState: StateFlow<LibraryWorkState> = libraryWorkCoordinator.observeState()
 
@@ -80,11 +92,13 @@ class HomeViewModel @Inject constructor(
             }
             if (settingsRepository.autoScrapeEnabled.first()) {
                 val songs = musicRepository.observeSongs().first()
+                val categoryScrapeEnabled = settingsRepository.aiCategoryScrapeEnabled.first()
                 val needsScrape = songs.any {
                     it.lyrics.isNullOrBlank() ||
                         it.artworkUri.isNullOrBlank() ||
                         it.releaseYear == null ||
-                        it.hasUnresolvedAlbumTitle()
+                        it.hasUnresolvedAlbumTitle() ||
+                        (categoryScrapeEnabled && it.categoryTag.isNullOrBlank())
                 }
                 if (needsScrape) {
                     libraryWorkCoordinator.startScrapeMissing()
@@ -101,44 +115,18 @@ class HomeViewModel @Inject constructor(
                 _featuredSong.value = null
                 return@launch
             }
-            val now = System.currentTimeMillis()
-            val sevenDaysMs = 7 * 24 * 60 * 60 * 1000L
-            val thirtyDaysMs = 30 * 24 * 60 * 60 * 1000L
-
             val lastPlayedMap = playRecordDao.lastPlayedPerSong().associate { it.songId to it.lastPlayedMs }
             val mostRecentTimestamp = playRecordDao.mostRecentTimestamp()
             val ratingSummaries = commentDao.averageRatingsAll()
-            val ratingMap = ratingSummaries.associate { it.songId to it.avgRating }
-            val songsWithRatings = ratingSummaries.size
-            val sparseRatings = songsWithRatings < 5
-
-            val recentArtist = if (mostRecentTimestamp != null) {
-                val recentSongId = lastPlayedMap.maxByOrNull { it.value }?.key
-                songs.find { it.id == recentSongId }?.artistName
-            } else null
-
-            val weighted = songs.flatMap { song ->
-                val lastPlayed = lastPlayedMap[song.id]
-                val daysSincePlayed = if (lastPlayed != null) (now - lastPlayed) / (24 * 60 * 60 * 1000) else null
-                val isNew = now - song.dateAddedEpochMs <= thirtyDaysMs
-                val avgRating = ratingMap[song.id]
-
-                val weight = when {
-                    lastPlayed == null -> 10
-                    daysSincePlayed != null && daysSincePlayed >= 7 -> 7
-                    daysSincePlayed != null && daysSincePlayed >= 30 -> 5
-                    song.artistName == recentArtist && recentArtist != null -> 6
-                    isNew -> 4
-                    avgRating != null && avgRating >= 3.5 -> 3
-                    avgRating != null -> 1
-                    else -> 3
-                }
-                val adjustedWeight = if (sparseRatings) {
-                    (weight * 0.4 + 3 * 0.6).toInt().coerceAtLeast(1)
-                } else weight
-                List(adjustedWeight) { song }
+            val featured = withContext(Dispatchers.Default) {
+                chooseFeaturedSong(
+                    songs = songs,
+                    lastPlayedMap = lastPlayedMap,
+                    mostRecentTimestamp = mostRecentTimestamp,
+                    ratingSummaries = ratingSummaries
+                )
             }
-            _featuredSong.value = weighted[Random.nextInt(weighted.size)]
+            _featuredSong.value = featured
         }
     }
 
@@ -199,6 +187,30 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun downloadSong(song: Song, outputDir: File) {
+        val progress = _downloadProgress.value
+        if (song.id in progress.downloadingIds) return
+        viewModelScope.launch {
+            val allSongs = musicRepository.observeSongs().first()
+            val fileName = song.uri.substringAfterLast('/')
+            val duplicate = allSongs.firstOrNull {
+                it.source == Source.LOCAL && it.uri.substringAfterLast('/') == fileName
+            }
+            if (duplicate != null) {
+                _downloadProgress.value = DownloadProgress(total = 1, completed = 1, downloadingIds = emptySet())
+                return@launch
+            }
+            _downloadProgress.value = DownloadProgress(total = 1, completed = 0, downloadingIds = setOf(song.id))
+            val downloaded = withContext(Dispatchers.IO) {
+                webDavRepository.downloadSong(song, outputDir)
+            }
+            if (downloaded) {
+                musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
+            }
+            _downloadProgress.value = DownloadProgress(total = 1, completed = 1, downloadingIds = emptySet())
+        }
+    }
+
     fun updateSongMetadata(
         songId: String,
         title: String,
@@ -241,6 +253,60 @@ private fun buildRecommendedSongs(songs: List<Song>): List<Song> {
         .take(RECOMMENDATION_POOL_SIZE)
         .shuffled()
         .take(RECOMMENDATION_DISPLAY_COUNT)
+}
+
+private fun chooseFeaturedSong(
+    songs: List<Song>,
+    lastPlayedMap: Map<String, Long>,
+    mostRecentTimestamp: Long?,
+    ratingSummaries: List<CommentDao.SongRatingSummary>
+): Song? {
+    if (songs.isEmpty()) return null
+    val now = System.currentTimeMillis()
+    val thirtyDaysMs = 30 * 24 * 60 * 60 * 1000L
+    val ratingMap = ratingSummaries.associate { it.songId to it.avgRating }
+    val sparseRatings = ratingSummaries.size < 5
+    val recentArtist = if (mostRecentTimestamp != null) {
+        val recentSongId = lastPlayedMap.maxByOrNull { it.value }?.key
+        songs.firstOrNull { it.id == recentSongId }?.artistName
+    } else {
+        null
+    }
+
+    val weightedSongs = songs.map { song ->
+        val lastPlayed = lastPlayedMap[song.id]
+        val daysSincePlayed = if (lastPlayed != null) {
+            (now - lastPlayed) / (24 * 60 * 60 * 1000)
+        } else {
+            null
+        }
+        val isNew = now - song.dateAddedEpochMs <= thirtyDaysMs
+        val avgRating = ratingMap[song.id]
+        val weight = when {
+            lastPlayed == null -> 10
+            daysSincePlayed != null && daysSincePlayed >= 7 -> 7
+            daysSincePlayed != null && daysSincePlayed >= 30 -> 5
+            recentArtist != null && song.artistName == recentArtist -> 6
+            isNew -> 4
+            avgRating != null && avgRating >= 3.5 -> 3
+            avgRating != null -> 1
+            else -> 3
+        }
+        val adjustedWeight = if (sparseRatings) {
+            (weight * 0.4 + 3 * 0.6).toInt().coerceAtLeast(1)
+        } else {
+            weight
+        }
+        song to adjustedWeight
+    }
+    val totalWeight = weightedSongs.sumOf { it.second }
+    if (totalWeight <= 0) return songs.random()
+    var cursor = Random.nextInt(totalWeight)
+    weightedSongs.forEach { (song, weight) ->
+        if (cursor < weight) return song
+        cursor -= weight
+    }
+    return songs.last()
 }
 
 private const val RECOMMENDATION_POOL_SIZE = 50

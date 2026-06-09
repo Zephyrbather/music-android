@@ -22,6 +22,7 @@ data class Song(
     val sampleRateHz: Int? = null,
     val releaseYear: Int? = null,
     val releaseMonth: Int? = null,
+    val categoryTag: String? = null,
     val dateAddedEpochMs: Long = System.currentTimeMillis(),
     val isFavorite: Boolean = false
 ) {

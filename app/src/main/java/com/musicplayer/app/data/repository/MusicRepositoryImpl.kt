@@ -61,7 +61,17 @@ class MusicRepositoryImpl @Inject constructor(
 
     override suspend fun upsertSongs(songs: List<Song>) {
         if (songs.isEmpty()) return
-        songDao.upsertAll(songs.map { it.toEntity() })
+        val existingById = songs
+            .mapNotNull { song -> songDao.getSong(song.id)?.toDomain() }
+            .associateBy { it.id }
+        val mergedSongs = songs.map { song ->
+            if (song.categoryTag.isNullOrBlank()) {
+                song.copy(categoryTag = existingById[song.id]?.categoryTag)
+            } else {
+                song
+            }
+        }
+        songDao.upsertAll(mergedSongs.map { it.toEntity() })
         rebuildLibraryArtwork(fetchArtistArtwork = false)
     }
 
@@ -99,7 +109,8 @@ class MusicRepositoryImpl @Inject constructor(
     override suspend fun saveScrapedMetadata(
         song: Song,
         mode: ScrapeSearchMode,
-        renameLocalFile: Boolean
+        renameLocalFile: Boolean,
+        rebuildLibraryArtwork: Boolean
     ): Song {
         val savedSong = audioTagWriter.writeIfSupported(
             song = song,
@@ -107,7 +118,9 @@ class MusicRepositoryImpl @Inject constructor(
             renameLocalFile = renameLocalFile
         )
         songDao.upsertAll(listOf(savedSong.toEntity()))
-        rebuildLibraryArtwork(fetchArtistArtwork = false)
+        if (rebuildLibraryArtwork) {
+            rebuildLibraryArtwork(fetchArtistArtwork = false)
+        }
         return savedSong
     }
 
@@ -146,11 +159,20 @@ class MusicRepositoryImpl @Inject constructor(
         return songs
     }
 
-    override suspend fun refreshMetadata(songId: String, provider: MetadataProvider): Song? {
+    override suspend fun refreshMetadata(
+        songId: String,
+        provider: MetadataProvider,
+        rebuildLibraryArtwork: Boolean
+    ): Song? {
         val current = songDao.getSong(songId)?.toDomain() ?: return null
         val mode = current.missingScrapeMode() ?: return current
         val enriched = metadataScraper.enrich(current, provider)
-        return saveScrapedMetadata(enriched, mode = mode, renameLocalFile = false)
+        return saveScrapedMetadata(
+            song = enriched,
+            mode = mode,
+            renameLocalFile = false,
+            rebuildLibraryArtwork = rebuildLibraryArtwork
+        )
     }
 
     override suspend fun refreshArtistArtwork(artistName: String): String? {
@@ -187,6 +209,12 @@ class MusicRepositoryImpl @Inject constructor(
             audioTagWriter.writeIfSupported(it, mode = ScrapeSearchMode.ALL, renameLocalFile = false)
         }
         rebuildLibraryArtwork(fetchArtistArtwork = false)
+    }
+
+    override suspend fun updateSongCategory(songId: String, categoryTag: String?): Song? {
+        val normalized = categoryTag?.trim()?.takeIf { it.isNotBlank() }
+        songDao.updateCategory(songId, normalized)
+        return songDao.getSong(songId)?.toDomain()
     }
 
     override suspend fun rebuildLibraryArtwork(fetchArtistArtwork: Boolean) {

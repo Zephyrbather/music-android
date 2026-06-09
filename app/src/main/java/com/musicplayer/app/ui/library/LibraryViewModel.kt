@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,7 +61,11 @@ data class LibraryUiState(
     val selectedTab: LibraryTab = LibraryTab.SONGS,
     val albumSortMode: AlbumSortMode = AlbumSortMode.ALBUM_TITLE,
     val albumSortDirection: AlbumSortDirection = AlbumSortDirection.ASCENDING,
-    val showOnlineLibrary: Boolean = false
+    val showOnlineLibrary: Boolean = false,
+    val songIndexLetters: List<String> = emptyList(),
+    val firstSongIndexByLetter: Map<String, Int> = emptyMap(),
+    val artistIndexLetters: List<String> = emptyList(),
+    val firstArtistIndexByLetter: Map<String, Int> = emptyMap()
 )
 
 data class DownloadProgress(
@@ -85,68 +90,40 @@ class LibraryViewModel @Inject constructor(
     private val _downloadProgress = MutableStateFlow(DownloadProgress())
     val downloadProgress: StateFlow<DownloadProgress> = _downloadProgress.asStateFlow()
 
+    private val libraryContent: StateFlow<LibraryContent> = combine(
+        musicRepository.observeSongs(),
+        musicRepository.observeArtists(),
+        showOnlineLibrary,
+        albumSortState
+    ) { songs, storedArtists, online, sortState ->
+        buildLibraryContent(
+            songs = songs,
+            storedArtists = storedArtists,
+            online = online,
+            sortState = sortState
+        )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryContent())
+
     val uiState: StateFlow<LibraryUiState> = combine(
-        combine(
-            musicRepository.observeSongs(),
-            playlistRepository.observePlaylists(),
-            musicRepository.observeArtists(),
-            selectedTab,
-            albumSortState
-        ) { songs, playlists, storedArtists, tab, sortState ->
-            LibraryInputs(songs, playlists, storedArtists, tab, sortState)
-        },
-        showOnlineLibrary
-    ) { input, online ->
-        val songs = input.songs
-        val playlists = input.playlists
-        val tab = input.tab
-        val filteredSongs = if (online) {
-            songs.filter { it.source == Source.WEBDAV }
-        } else {
-            songs.filter { it.source != Source.WEBDAV }
-        }
-        val derivedAlbums = filteredSongs.groupBy { it.albumGroupingId() }
-            .map { (id, albumSongs) ->
-                val first = albumSongs.first()
-                val releaseSong = albumSongs
-                    .filter { (it.releaseYear ?: 0) > 0 }
-                    .minWithOrNull(compareBy<Song> { it.releaseYear ?: Int.MAX_VALUE }
-                        .thenBy { it.releaseMonth ?: Int.MAX_VALUE })
-                Album(
-                    id = id,
-                    title = first.albumTitle,
-                    artistName = first.artistName,
-                    artworkUri = albumSongs.firstNotNullOfOrNull { it.artworkUri },
-                    songCount = albumSongs.size,
-                    releaseYear = releaseSong?.releaseYear,
-                    releaseMonth = releaseSong?.releaseMonth,
-                    source = first.source
-                )
-            }.sortedWith(input.sortState.comparator())
-        val storedById = input.storedArtists.associateBy { it.id }
-        val storedByName = input.storedArtists.associateBy { it.name.normalizedNameKey() }
-        val derivedArtists = filteredSongs.groupBy { it.artistGroupingId() }
-            .map { (id, artistSongs) ->
-                val first = artistSongs.first()
-                Artist(
-                    id = id,
-                    name = first.artistName,
-                    albumCount = artistSongs.map { it.albumGroupingId() }.distinct().size,
-                    songCount = artistSongs.size,
-                    artworkUri = storedById[id]?.artworkUri
-                        ?: storedByName[first.artistName.normalizedNameKey()]?.artworkUri
-                        ?: artistSongs.firstNotNullOfOrNull { it.artworkUri }
-                )
-            }.sortedWith(compareByLibraryArtistName())
+        libraryContent,
+        playlistRepository.observePlaylists(),
+        selectedTab
+    ) { content, playlists, tab ->
         LibraryUiState(
-            songs = filteredSongs.sortedWith(compareByLibrarySongTitle()),
-            albums = derivedAlbums,
-            artists = derivedArtists,
+            songs = content.songs,
+            albums = content.albums,
+            artists = content.artists,
             playlists = playlists,
             selectedTab = tab,
-            albumSortMode = input.sortState.mode,
-            albumSortDirection = input.sortState.direction,
-            showOnlineLibrary = online
+            albumSortMode = content.albumSortMode,
+            albumSortDirection = content.albumSortDirection,
+            showOnlineLibrary = content.showOnlineLibrary,
+            songIndexLetters = content.songIndexLetters,
+            firstSongIndexByLetter = content.firstSongIndexByLetter,
+            artistIndexLetters = content.artistIndexLetters,
+            firstArtistIndexByLetter = content.firstArtistIndexByLetter
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
 
@@ -272,13 +249,89 @@ class LibraryViewModel @Inject constructor(
     }
 }
 
-private data class LibraryInputs(
-    val songs: List<Song>,
-    val playlists: List<Playlist>,
-    val storedArtists: List<Artist>,
-    val tab: LibraryTab,
-    val sortState: AlbumSortState
+private data class LibraryContent(
+    val songs: List<Song> = emptyList(),
+    val albums: List<Album> = emptyList(),
+    val artists: List<Artist> = emptyList(),
+    val albumSortMode: AlbumSortMode = AlbumSortMode.ALBUM_TITLE,
+    val albumSortDirection: AlbumSortDirection = AlbumSortDirection.ASCENDING,
+    val showOnlineLibrary: Boolean = false,
+    val songIndexLetters: List<String> = emptyList(),
+    val firstSongIndexByLetter: Map<String, Int> = emptyMap(),
+    val artistIndexLetters: List<String> = emptyList(),
+    val firstArtistIndexByLetter: Map<String, Int> = emptyMap()
 )
+
+private fun buildLibraryContent(
+    songs: List<Song>,
+    storedArtists: List<Artist>,
+    online: Boolean,
+    sortState: AlbumSortState
+): LibraryContent {
+    val filteredSongs = if (online) {
+        songs.filter { it.source == Source.WEBDAV }
+    } else {
+        songs.filter { it.source != Source.WEBDAV }
+    }
+    val sortedSongs = filteredSongs.sortedWith(compareByLibrarySongTitle())
+    val derivedAlbums = filteredSongs.groupBy { it.albumGroupingId() }
+        .map { (id, albumSongs) ->
+            val first = albumSongs.first()
+            val releaseSong = albumSongs
+                .filter { (it.releaseYear ?: 0) > 0 }
+                .minWithOrNull(
+                    compareBy<Song> { it.releaseYear ?: Int.MAX_VALUE }
+                        .thenBy { it.releaseMonth ?: Int.MAX_VALUE }
+                )
+            Album(
+                id = id,
+                title = first.albumTitle,
+                artistName = first.artistName,
+                artworkUri = albumSongs.firstNotNullOfOrNull { it.artworkUri },
+                songCount = albumSongs.size,
+                releaseYear = releaseSong?.releaseYear,
+                releaseMonth = releaseSong?.releaseMonth,
+                source = first.source
+            )
+        }.sortedWith(sortState.comparator())
+    val storedById = storedArtists.associateBy { it.id }
+    val storedByName = storedArtists.associateBy { it.name.normalizedNameKey() }
+    val derivedArtists = filteredSongs.groupBy { it.artistGroupingId() }
+        .map { (id, artistSongs) ->
+            val first = artistSongs.first()
+            Artist(
+                id = id,
+                name = first.artistName,
+                albumCount = artistSongs.map { it.albumGroupingId() }.distinct().size,
+                songCount = artistSongs.size,
+                artworkUri = storedById[id]?.artworkUri
+                    ?: storedByName[first.artistName.normalizedNameKey()]?.artworkUri
+                    ?: artistSongs.firstNotNullOfOrNull { it.artworkUri }
+            )
+        }.sortedWith(compareByLibraryArtistName())
+    val songIndexLetters = sortedSongs.map { it.title.libraryIndexLetter() }
+    val artistIndexLetters = derivedArtists.map { it.name.libraryIndexLetter() }
+    return LibraryContent(
+        songs = sortedSongs,
+        albums = derivedAlbums,
+        artists = derivedArtists,
+        albumSortMode = sortState.mode,
+        albumSortDirection = sortState.direction,
+        showOnlineLibrary = online,
+        songIndexLetters = songIndexLetters,
+        firstSongIndexByLetter = firstIndexByLetter(songIndexLetters),
+        artistIndexLetters = artistIndexLetters,
+        firstArtistIndexByLetter = firstIndexByLetter(artistIndexLetters)
+    )
+}
+
+private fun firstIndexByLetter(letters: List<String>): Map<String, Int> {
+    val result = LinkedHashMap<String, Int>()
+    letters.forEachIndexed { index, letter ->
+        result.putIfAbsent(letter, index)
+    }
+    return result
+}
 
 private fun AlbumSortState.comparator(): Comparator<Album> {
     return when (mode) {
@@ -350,6 +403,14 @@ private fun compareLibraryText(a: String, b: String): Int {
 
     val pinyinCmp = PinyinHelper.comparePinyin(a, b)
     return if (pinyinCmp != 0) pinyinCmp else a.compareTo(b)
+}
+
+private fun String.libraryIndexLetter(): String {
+    val first = trim().firstOrNull() ?: return "#"
+    if (first in '0'..'9') return "#"
+    if (first in 'A'..'Z') return first.toString()
+    if (first in 'a'..'z') return first.uppercaseChar().toString()
+    return PinyinHelper.toPinyinInitial(first) ?: "#"
 }
 
 private fun libraryInitialRank(value: String): Int {

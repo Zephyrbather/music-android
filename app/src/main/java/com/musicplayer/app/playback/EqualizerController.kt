@@ -2,15 +2,21 @@ package com.musicplayer.app.playback
 
 import android.media.audiofx.Equalizer
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class EqualizerController @Inject constructor() {
     private var equalizer: Equalizer? = null
+    private var lastLevels: List<Short> = emptyList()
 
     fun attach(audioSessionId: Int) {
         release()
         equalizer = runCatching {
             Equalizer(0, audioSessionId).apply { enabled = true }
         }.getOrNull()
+        if (lastLevels.isNotEmpty()) {
+            setBandLevels(lastLevels)
+        }
     }
 
     val bandFrequencies: List<Int>
@@ -23,6 +29,7 @@ class EqualizerController @Inject constructor() {
         get() = equalizer?.numberOfBands?.toInt() ?: 10
 
     fun setBandLevels(levels: List<Short>) {
+        lastLevels = levels
         val eq = equalizer ?: return
         levels.forEachIndexed { index, level ->
             if (index < eq.numberOfBands) {
@@ -32,6 +39,11 @@ class EqualizerController @Inject constructor() {
     }
 
     fun setBandLevel(band: Short, level: Short) {
+        lastLevels = lastLevels.toMutableList().also { levels ->
+            val index = band.toInt()
+            while (levels.size <= index) levels.add(0.toShort())
+            levels[index] = level
+        }
         equalizer?.setBandLevel(band, level)
     }
 

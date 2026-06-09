@@ -53,6 +53,8 @@ import com.musicplayer.app.ui.components.PlaylistCard
 import com.musicplayer.app.ui.components.SongListItem
 import com.musicplayer.app.ui.i18n.LocalStrings
 
+private const val RANKING_PREVIEW_LIMIT = 30
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PlaylistsScreen(
@@ -70,6 +72,12 @@ fun PlaylistsScreen(
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
     var mergeTarget by remember { mutableStateOf<Playlist?>(null) }
     var contextPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    var showFullRankings by rememberSaveable(rankingPeriod) { mutableStateOf(false) }
+    val visibleRankedSongs = if (showFullRankings) {
+        rankedSongs
+    } else {
+        rankedSongs.take(RANKING_PREVIEW_LIMIT)
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -92,7 +100,11 @@ fun PlaylistsScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            itemsIndexed(state.playlists, key = { _, p -> p.id }) { index, playlist ->
+            itemsIndexed(
+                items = state.playlists,
+                key = { _, p -> p.id },
+                contentType = { _, _ -> "playlist" }
+            ) { index, playlist ->
                 Box {
                     PlaylistCard(
                         playlist = playlist,
@@ -195,13 +207,33 @@ fun PlaylistsScreen(
                     )
                 }
             } else {
-                itemsIndexed(rankedSongs, key = { _, r -> r.song.id }) { index, ranked ->
+                itemsIndexed(
+                    items = visibleRankedSongs,
+                    key = { _, r -> r.song.id },
+                    contentType = { _, _ -> "ranking-song" }
+                ) { index, ranked ->
                     RankingSongRow(
                         rank = index + 1,
                         song = ranked.song,
                         totalMs = ranked.totalMs,
                         onClick = { }
                     )
+                }
+                if (rankedSongs.size > RANKING_PREVIEW_LIMIT) {
+                    item {
+                        TextButton(
+                            onClick = { showFullRankings = !showFullRankings },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (showFullRankings) {
+                                    strings.collapseRanking
+                                } else {
+                                    strings.viewFullRanking.format(rankedSongs.size)
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

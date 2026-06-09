@@ -1,5 +1,6 @@
 package com.musicplayer.app.ui.home
 
+import android.os.Environment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,11 +18,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.QueueMusic
@@ -30,6 +34,7 @@ import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -62,16 +67,20 @@ import coil.request.ImageRequest
 import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.Source
-import com.musicplayer.app.ui.i18n.AppStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
 import com.musicplayer.app.ui.components.AlbumCard
 import com.musicplayer.app.ui.components.EditSongDialog
+import com.musicplayer.app.ui.components.SongActionHeader
 import com.musicplayer.app.ui.components.SongListItem
 import com.musicplayer.app.domain.usecase.LibraryWorkType
+import com.musicplayer.app.ui.library.DownloadProgress
+import java.io.File
 
 @Composable
 fun HomeScreen(
     onPlaySong: (Song, List<Song>) -> Unit,
+    onOpenArtist: (String) -> Unit = {},
+    onOpenAlbum: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
@@ -81,7 +90,12 @@ fun HomeScreen(
     val actionSong by viewModel.actionSong.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val editSong by viewModel.editSong.collectAsStateWithLifecycle()
+    val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
+    val context = LocalContext.current
+    val downloadDir = remember {
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "WebDAV")
+    }
     var removeSong by remember { mutableStateOf<Song?>(null) }
     var deleteFileSong by remember { mutableStateOf<Song?>(null) }
 
@@ -123,7 +137,11 @@ fun HomeScreen(
         item {
             SectionTitle(title = strings.recommendedSongs)
         }
-        items(state.recommendedSongs, key = { "recommended-${it.id}" }) { song ->
+        items(
+            items = state.recommendedSongs,
+            key = { "recommended-${it.id}" },
+            contentType = { "home-song" }
+        ) { song ->
             SongListItem(
                 song = song,
                 onClick = { viewModel.selectSong(song.id) },
@@ -134,7 +152,11 @@ fun HomeScreen(
         item {
             SectionTitle(title = strings.recentlyAdded)
         }
-        items(state.recentSongs, key = { it.id }) { song ->
+        items(
+            items = state.recentSongs,
+            key = { it.id },
+            contentType = { "home-song" }
+        ) { song ->
             SongListItem(
                 song = song,
                 onClick = { viewModel.selectSong(song.id) },
@@ -147,7 +169,11 @@ fun HomeScreen(
         }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(state.albums, key = { it.id }) { album ->
+                items(
+                    items = state.albums,
+                    key = { it.id },
+                    contentType = { "home-album" }
+                ) { album ->
                     AlbumCard(
                         album = album,
                         onClick = {},
@@ -162,7 +188,6 @@ fun HomeScreen(
         SongActionSheet(
             song = song,
             playlists = playlists,
-            strings = strings,
             onDismiss = { viewModel.clearActionSong() },
             onPlayNext = {
                 viewModel.playNext(song)
@@ -178,6 +203,11 @@ fun HomeScreen(
             },
             onToggleFavorite = {
                 viewModel.toggleFavorite(song)
+                viewModel.clearActionSong()
+            },
+            onShare = {
+                shareSong(context, song)
+                viewModel.clearActionSong()
             },
             onEditInfo = {
                 viewModel.showEditDialog(song)
@@ -190,8 +220,20 @@ fun HomeScreen(
                 viewModel.clearActionSong()
                 deleteFileSong = song
             },
-            onOpenArtist = {},
-            onOpenAlbum = {}
+            onOpenArtist = {
+                song.artistId?.let(onOpenArtist)
+                viewModel.clearActionSong()
+            },
+            onOpenAlbum = {
+                song.albumId?.let(onOpenAlbum)
+                viewModel.clearActionSong()
+            },
+            onDownload = {
+                viewModel.downloadSong(song, downloadDir)
+                viewModel.clearActionSong()
+            },
+            isDownloading = song.id in downloadProgress.downloadingIds,
+            downloadProgress = downloadProgress
         )
     }
 
@@ -268,11 +310,15 @@ private fun HomeHero(
             .height(240.dp)
     ) {
         if (song != null && !song.artworkUri.isNullOrBlank()) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
+            val context = LocalContext.current
+            val imageRequest = remember(context, song.artworkUri) {
+                ImageRequest.Builder(context)
                     .data(song.artworkUri)
-                    .crossfade(true)
-                    .build(),
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = imageRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -375,42 +421,73 @@ private fun SectionTitle(
 private fun SongActionSheet(
     song: Song,
     playlists: List<Playlist>,
-    strings: AppStrings,
     onDismiss: () -> Unit,
     onPlayNext: () -> Unit,
     onCreatePlaylist: () -> Unit,
     onAddToPlaylist: (String) -> Unit,
     onToggleFavorite: () -> Unit,
+    onShare: () -> Unit,
     onEditInfo: () -> Unit,
     onRemoveFromLibrary: () -> Unit,
     onDeleteFile: () -> Unit,
     onOpenArtist: () -> Unit,
-    onOpenAlbum: () -> Unit
+    onOpenAlbum: () -> Unit,
+    onDownload: () -> Unit = {},
+    isDownloading: Boolean = false,
+    downloadProgress: DownloadProgress = DownloadProgress()
 ) {
-    val context = LocalContext.current
+    val strings = LocalStrings.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(
-            text = song.title,
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        SongActionHeader(song = song)
         ListItem(
             headlineContent = { Text(strings.addToNext) },
             leadingContent = { Icon(Icons.Outlined.QueueMusic, contentDescription = null) },
             modifier = Modifier.clickable(onClick = onPlayNext)
         )
+        var showPlaylistMenu by remember { mutableStateOf(false) }
         ListItem(
-            headlineContent = { Text(strings.addToNewPlaylist) },
+            headlineContent = { Text(strings.addToPlaylist) },
             leadingContent = { Icon(Icons.Outlined.PlaylistAdd, contentDescription = null) },
-            modifier = Modifier.clickable(onClick = onCreatePlaylist)
+            modifier = Modifier.clickable { showPlaylistMenu = !showPlaylistMenu }
         )
-        playlists.forEach { playlist ->
+        if (showPlaylistMenu) {
             ListItem(
-                headlineContent = { Text("${strings.addToPlaylistPrefix}${playlist.name}") },
-                leadingContent = { Icon(Icons.Outlined.PlaylistAdd, contentDescription = null) },
-                modifier = Modifier.clickable { onAddToPlaylist(playlist.id) }
+                headlineContent = { Text(strings.addToNewPlaylist) },
+                leadingContent = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                modifier = Modifier
+                    .clickable {
+                        showPlaylistMenu = false
+                        onCreatePlaylist()
+                    }
+                    .padding(start = 32.dp)
+            )
+            playlists.forEach { playlist ->
+                ListItem(
+                    headlineContent = { Text(playlist.name) },
+                    leadingContent = { Icon(Icons.Outlined.PlaylistAdd, contentDescription = null) },
+                    modifier = Modifier
+                        .clickable {
+                            showPlaylistMenu = false
+                            onAddToPlaylist(playlist.id)
+                        }
+                        .padding(start = 32.dp)
+                )
+            }
+        }
+        if (song.source == Source.WEBDAV) {
+            Divider()
+            val progress = downloadProgress
+            val progressText = if (progress.total > 1) " (${progress.completed}/${progress.total})" else ""
+            ListItem(
+                headlineContent = { Text(strings.download + progressText) },
+                leadingContent = {
+                    if (isDownloading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Outlined.Download, contentDescription = null)
+                    }
+                },
+                modifier = Modifier.clickable(enabled = !isDownloading) { onDownload() }
             )
         }
         Divider()
@@ -450,10 +527,24 @@ private fun SongActionSheet(
         ListItem(
             headlineContent = { Text(strings.share) },
             leadingContent = { Icon(Icons.Outlined.Share, contentDescription = null) },
-            modifier = Modifier.clickable {
-                shareSong(context, song)
-            }
+            modifier = Modifier.clickable(onClick = onShare)
         )
+        if (!song.artistId.isNullOrBlank()) {
+            ListItem(
+                headlineContent = { Text(strings.viewArtist) },
+                supportingContent = { Text(song.artistName) },
+                leadingContent = { Icon(Icons.Outlined.Person, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onOpenArtist)
+            )
+        }
+        if (!song.albumId.isNullOrBlank()) {
+            ListItem(
+                headlineContent = { Text(strings.viewAlbum) },
+                supportingContent = { Text(song.albumTitle) },
+                leadingContent = { Icon(Icons.Outlined.Album, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onOpenAlbum)
+            )
+        }
         TextButton(
             onClick = onDismiss,
             modifier = Modifier

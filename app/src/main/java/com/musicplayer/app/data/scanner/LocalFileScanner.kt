@@ -10,6 +10,7 @@ import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.Source
 import com.musicplayer.app.domain.model.isUnresolvedAlbumTitle
 import com.musicplayer.app.domain.model.stableMusicId
+import com.musicplayer.app.performance.CpuPerformanceManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -20,12 +21,14 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class LocalFileScanner @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val cpuPerformanceManager: CpuPerformanceManager
 ) {
     suspend fun scan(
         folderUris: List<String> = emptyList(),
         onBatch: suspend (List<Song>) -> Unit = {}
     ): List<Song> = withContext(Dispatchers.IO) {
+        cpuPerformanceManager.setBackgroundPriority()
         val mediaPaths = mutableSetOf<String>()
         val (mediaStoreSongs, folderSongs) = coroutineScope {
             val mediaDeferred = async { runCatching { queryMediaStore(mediaPaths) }.getOrDefault(emptyList()) }

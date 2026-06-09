@@ -1,6 +1,7 @@
 package com.musicplayer.app.domain.usecase
 
 import com.musicplayer.app.data.local.dao.PlayRecordDao
+import com.musicplayer.app.performance.CpuPerformanceManager
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.Song
@@ -21,12 +22,14 @@ import javax.inject.Singleton
 @Singleton
 class PlayMusicUseCase @Inject constructor(
     private val playRecordDao: PlayRecordDao,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val cpuPerformanceManager: CpuPerformanceManager
 ) {
     private val playbackState = MutableStateFlow(PlaybackState())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     init {
+        cpuPerformanceManager.boostPlaybackThread()
         scope.launch {
             settingsRepository.playbackMode.distinctUntilChanged().collect { mode ->
                 playbackState.update { state ->

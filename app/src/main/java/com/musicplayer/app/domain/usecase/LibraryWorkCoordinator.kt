@@ -4,6 +4,7 @@ import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.hasUnresolvedAlbumTitle
 import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
+import com.musicplayer.app.performance.CpuPerformanceManager
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -47,7 +48,9 @@ class LibraryWorkCoordinator @Inject constructor(
     private val scanLibraryUseCase: ScanLibraryUseCase,
     private val fetchMetadataUseCase: FetchMetadataUseCase,
     private val aiScrapeMetadataUseCase: AiScrapeMetadataUseCase,
-    private val settingsRepository: SettingsRepository
+    private val aiGenerateSongCategoryUseCase: AiGenerateSongCategoryUseCase,
+    private val settingsRepository: SettingsRepository,
+    private val cpuPerformanceManager: CpuPerformanceManager
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val state = MutableStateFlow(LibraryWorkState())
@@ -61,6 +64,7 @@ class LibraryWorkCoordinator @Inject constructor(
     fun startScan() {
         if (state.value.running) return
         scope.launch {
+            cpuPerformanceManager.setBackgroundPriority()
             state.value = LibraryWorkState(type = LibraryWorkType.SCAN, running = true)
             var discovered = 0
             runCatching {
@@ -106,8 +110,22 @@ class LibraryWorkCoordinator @Inject constructor(
     }
 
     private suspend fun runScrape(freshStart: Boolean) {
+        cpuPerformanceManager.setBackgroundPriority()
         val allSongs = musicRepository.observeSongs().first()
-        val allCandidates = allSongs.filter { it.needsMetadataScrape() }
+        val requestedAiMetadataScrape = settingsRepository.backgroundAiScrapeEnabled.first()
+        val requestedAiCategoryScrape = settingsRepository.aiCategoryScrapeEnabled.first()
+        val requiresAi = requestedAiMetadataScrape || requestedAiCategoryScrape
+        val apiKey = if (requiresAi) settingsRepository.aiApiKey.first() else ""
+        val model = if (requiresAi) settingsRepository.aiModel.first() else ""
+        if (requiresAi && apiKey.isBlank()) {
+            if (requestedAiMetadataScrape) settingsRepository.setBackgroundAiScrapeEnabled(false)
+            if (requestedAiCategoryScrape) settingsRepository.setAiCategoryScrapeEnabled(false)
+        }
+        val useAiMetadataScrape = requestedAiMetadataScrape && apiKey.isNotBlank()
+        val useAiCategoryScrape = requestedAiCategoryScrape && apiKey.isNotBlank()
+        val allCandidates = allSongs.filter {
+            it.needsMetadataScrape() || (useAiCategoryScrape && it.needsCategoryScrape())
+        }
 
         val candidates = if (freshStart) {
             allCandidates
@@ -121,15 +139,9 @@ class LibraryWorkCoordinator @Inject constructor(
             return
         }
 
-        val useAi = settingsRepository.backgroundAiScrapeEnabled.first()
-        val apiKey = if (useAi) settingsRepository.aiApiKey.first() else ""
-        val model = if (useAi) settingsRepository.aiModel.first() else ""
-        if (useAi && apiKey.isBlank()) {
-            settingsRepository.setBackgroundAiScrapeEnabled(false)
-        }
-
         val startCompleted = if (freshStart) 0 else settingsRepository.scrapeResumeCompleted.first()
-        settingsRepository.setScrapeResume(allCandidates.map { it.id }, startCompleted, allCandidates.size)
+        val candidateIds = allCandidates.map { it.id }
+        settingsRepository.setScrapeResume(candidateIds, startCompleted, allCandidates.size)
 
         state.value = LibraryWorkState(
             type = LibraryWorkType.SCRAPE,
@@ -141,20 +153,45 @@ class LibraryWorkCoordinator @Inject constructor(
         var updated = 0
         var failed = 0
         coroutineScope {
-            val parallelism = if (useAi && apiKey.isNotBlank()) AI_SCRAPE_PARALLELISM else SCRAPE_PARALLELISM
+            val parallelism = if (useAiMetadataScrape || useAiCategoryScrape) AI_SCRAPE_PARALLELISM else SCRAPE_PARALLELISM
             candidates.chunked(parallelism).forEach { chunk ->
                 val results = chunk.map { song ->
                     async {
                         song to runCatching {
-                            val normal = fetchMetadataUseCase(song.id)
-                            if (useAi && apiKey.isNotBlank() && normal?.hasMoreMetadataThan(song) != true) {
-                                when (val result = aiScrapeMetadataUseCase(song, apiKey, model, renameLocalFile = false)) {
-                                    is AiMetadataScrapeResult.Saved -> result.song
-                                    is AiMetadataScrapeResult.NoSelection -> null
-                                    AiMetadataScrapeResult.Failed -> null
+                            var resultSong: Song? = null
+                            if (song.needsMetadataScrape()) {
+                                val normal = fetchMetadataUseCase(
+                                    songId = song.id,
+                                    rebuildLibraryArtwork = false
+                                )
+                                resultSong = if (useAiMetadataScrape && normal?.hasMoreMetadataThan(song) != true) {
+                                    when (val result = aiScrapeMetadataUseCase(
+                                        song = song,
+                                        apiKey = apiKey,
+                                        model = model,
+                                        renameLocalFile = false,
+                                        rebuildLibraryArtwork = false
+                                    )) {
+                                        is AiMetadataScrapeResult.Saved -> result.song
+                                        is AiMetadataScrapeResult.NoSelection -> null
+                                        AiMetadataScrapeResult.Failed -> null
+                                    }
+                                } else {
+                                    normal
+                                }
+                            }
+                            val categoryBase = resultSong ?: song
+                            if (useAiCategoryScrape && categoryBase.needsCategoryScrape()) {
+                                when (val result = aiGenerateSongCategoryUseCase(
+                                    song = categoryBase,
+                                    apiKey = apiKey,
+                                    model = model
+                                )) {
+                                    is AiGenerateSongCategoryResult.Saved -> result.song
+                                    AiGenerateSongCategoryResult.Failed -> resultSong
                                 }
                             } else {
-                                normal
+                                resultSong
                             }
                         }.getOrNull()
                     }
@@ -166,15 +203,18 @@ class LibraryWorkCoordinator @Inject constructor(
                         failed += 1
                     }
                 }
-            val newCompleted = state.value.completed + chunk.size
-            state.update {
-                it.copy(
-                    completed = newCompleted,
-                    updated = updated,
-                    failed = failed
-                )
-            }
-            settingsRepository.setScrapeResume(allCandidates.map { it.id }, newCompleted, allCandidates.size)
+                val newCompleted = state.value.completed + chunk.size
+                state.update {
+                    it.copy(
+                        completed = newCompleted,
+                        updated = updated,
+                        failed = failed
+                    )
+                }
+                if (results.any { (song, result) -> result != null && result.hasMoreMetadataThan(song) }) {
+                    musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
+                }
+                settingsRepository.setScrapeResume(candidateIds, newCompleted, allCandidates.size)
             }
         }
 
@@ -185,7 +225,9 @@ class LibraryWorkCoordinator @Inject constructor(
             )
         }
         settingsRepository.clearScrapeResume()
-        musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = true)
+        scope.launch {
+            musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = true)
+        }
     }
 
     private companion object {
@@ -198,6 +240,10 @@ private fun Song.needsMetadataScrape(): Boolean {
     return artworkUri.isNullOrBlank() || lyrics.isNullOrBlank() || releaseYear == null || hasUnresolvedAlbumTitle()
 }
 
+private fun Song.needsCategoryScrape(): Boolean {
+    return categoryTag.isNullOrBlank()
+}
+
 private fun Song.hasMoreMetadataThan(before: Song): Boolean {
     return (before.artworkUri.isNullOrBlank() && !artworkUri.isNullOrBlank()) ||
         (before.lyrics.isNullOrBlank() && !lyrics.isNullOrBlank()) ||
@@ -205,5 +251,6 @@ private fun Song.hasMoreMetadataThan(before: Song): Boolean {
         artistName != before.artistName ||
         albumTitle != before.albumTitle ||
         releaseYear != before.releaseYear ||
-        releaseMonth != before.releaseMonth
+        releaseMonth != before.releaseMonth ||
+        categoryTag != before.categoryTag
 }

@@ -8,12 +8,21 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 internal suspend fun OkHttpClient.getString(
     url: String,
-    headers: Map<String, String> = emptyMap()
+    headers: Map<String, String> = emptyMap(),
+    timeoutMs: Long = SCRAPER_CALL_TIMEOUT_MS
 ): String? = withContext(Dispatchers.IO) {
     runCatching {
+        val client = if (timeoutMs > 0L) {
+            newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+        } else {
+            this@getString
+        }
         val builder = Request.Builder()
             .url(url)
             .header("User-Agent", headers["User-Agent"] ?: "MusicPlayer Android/0.1")
@@ -23,12 +32,14 @@ internal suspend fun OkHttpClient.getString(
             }
         }
         val request = builder.build()
-        newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
             response.body?.string()
         }
     }.getOrNull()
 }
+
+private const val SCRAPER_CALL_TIMEOUT_MS = 8_000L
 
 internal fun httpUrl(
     base: String,
