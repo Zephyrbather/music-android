@@ -12,7 +12,8 @@ import com.musicplayer.app.domain.model.Source
         Index("albumId"),
         Index("artistId"),
         Index("source"),
-        Index(value = ["uri"], unique = true)
+        Index(value = ["uri"], unique = true),
+        Index(value = ["albumTitle", "discNumber", "trackNumber", "title"])
     ]
 )
 data class SongEntity(
