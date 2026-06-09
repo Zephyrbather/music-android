@@ -80,7 +80,9 @@ class MusicPlaybackService : Service() {
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .build()
-        cpuPerformanceManager.boostPlaybackThread()
+        thread(name = "PlaybackPriorityBoost") {
+            cpuPerformanceManager.boostPlaybackThread()
+        }
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 equalizerController.attach(audioSessionId)
