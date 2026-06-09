@@ -29,6 +29,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media.app.NotificationCompat.MediaStyle as MediaNotificationStyle
 import com.musicplayer.app.MainActivity
@@ -86,7 +87,10 @@ class MusicPlaybackService : Service() {
                 10_000
             )
             .build()
+        val renderersFactory = DefaultRenderersFactory(this)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         player = ExoPlayer.Builder(this)
+            .setRenderersFactory(renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setLoadControl(loadControl)
             .setHandleAudioBecomingNoisy(true)
