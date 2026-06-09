@@ -4,6 +4,7 @@ import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.hasUnresolvedAlbumTitle
 import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
+import com.musicplayer.app.performance.AppDispatchers
 import com.musicplayer.app.performance.CpuPerformanceManager
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,7 +51,8 @@ class LibraryWorkCoordinator @Inject constructor(
     private val aiScrapeMetadataUseCase: AiScrapeMetadataUseCase,
     private val aiGenerateSongCategoryUseCase: AiGenerateSongCategoryUseCase,
     private val settingsRepository: SettingsRepository,
-    private val cpuPerformanceManager: CpuPerformanceManager
+    private val cpuPerformanceManager: CpuPerformanceManager,
+    private val appDispatchers: AppDispatchers
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val state = MutableStateFlow(LibraryWorkState())
@@ -96,7 +98,7 @@ class LibraryWorkCoordinator @Inject constructor(
 
     fun startScrapeMissing() {
         if (state.value.running) return
-        scope.launch {
+        scope.launch(appDispatchers.scraper) {
             settingsRepository.clearScrapeResume()
             runScrape(freshStart = true)
         }
@@ -104,7 +106,7 @@ class LibraryWorkCoordinator @Inject constructor(
 
     fun resumeScrapeMissing() {
         if (state.value.running) return
-        scope.launch {
+        scope.launch(appDispatchers.scraper) {
             runScrape(freshStart = false)
         }
     }
