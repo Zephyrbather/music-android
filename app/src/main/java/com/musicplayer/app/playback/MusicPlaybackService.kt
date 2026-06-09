@@ -9,39 +9,58 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
-import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media.app.NotificationCompat.MediaStyle as MediaNotificationStyle
 import com.musicplayer.app.MainActivity
 import com.musicplayer.app.R
+import com.musicplayer.app.domain.model.PlaybackMode
+import com.musicplayer.app.performance.CpuPerformanceManager
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.net.URL
 import javax.inject.Inject
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MusicPlaybackService : Service() {
     private lateinit var player: ExoPlayer
     private var mediaSession: MediaSessionCompat? = null
     @Inject lateinit var playMusicUseCase: PlayMusicUseCase
+    @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var equalizerController: EqualizerController
+    @Inject lateinit var cpuPerformanceManager: CpuPerformanceManager
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private lateinit var desktopLyricsOverlay: DesktopLyricsOverlayController
     private var currentTitle: String = ""
     private var currentArtist: String = ""
     private var currentAlbum: String = ""
@@ -50,6 +69,7 @@ class MusicPlaybackService : Service() {
     private var loadingArtworkUri: String? = null
     private var failedArtworkUri: String? = null
     private var isPlaying: Boolean = false
+    private var desktopLyricsEnabled: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -60,7 +80,12 @@ class MusicPlaybackService : Service() {
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .build()
+        cpuPerformanceManager.boostPlaybackThread()
         player.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                equalizerController.attach(audioSessionId)
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
                     Player.STATE_READY -> {
@@ -92,6 +117,8 @@ class MusicPlaybackService : Service() {
         })
         createNotificationChannel()
         initMediaSession()
+        desktopLyricsOverlay = DesktopLyricsOverlayController(this, playMusicUseCase, serviceScope)
+        restoreDesktopLyricsOverlay()
         updateMediaMetadata()
         updatePlaybackState()
         startForeground(PLAYBACK_NOTIFICATION_ID, buildNotification())
@@ -131,7 +158,7 @@ class MusicPlaybackService : Service() {
                 val artist = intent.getStringExtra(EXTRA_ARTIST).orEmpty()
                 val album = intent.getStringExtra(EXTRA_ALBUM).orEmpty()
                 val artworkUri = intent.getStringExtra(EXTRA_ARTWORK_URI)
-                currentTitle = title.ifBlank { getString(R.string.app_name) }
+                currentTitle = title
                 currentArtist = artist
                 currentAlbum = album
                 setCurrentArtwork(artworkUri)
@@ -173,6 +200,14 @@ class MusicPlaybackService : Service() {
                     playMusicUseCase.skipPrevious()?.let { playSong(it) }
                 }
             }
+
+            ACTION_TOGGLE_DESKTOP_LYRICS -> {
+                toggleDesktopLyrics()
+            }
+
+            ACTION_CYCLE_PLAYBACK_MODE -> {
+                cyclePlaybackMode()
+            }
         }
         return START_STICKY
     }
@@ -183,6 +218,9 @@ class MusicPlaybackService : Service() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        desktopLyricsOverlay.release()
+        equalizerController.release()
+        serviceScope.cancel()
         player.release()
         super.onDestroy()
     }
@@ -234,6 +272,54 @@ class MusicPlaybackService : Service() {
         if (player.isPlaying) pausePlayback() else resumePlayback()
     }
 
+    private fun toggleDesktopLyrics() {
+        serviceScope.launch {
+            val enabled = settingsRepository.desktopLyricsEnabled.first()
+            if (enabled) {
+                settingsRepository.setDesktopLyricsEnabled(false)
+                desktopLyricsEnabled = false
+                desktopLyricsOverlay.hide()
+            } else if (Settings.canDrawOverlays(this@MusicPlaybackService)) {
+                settingsRepository.setDesktopLyricsEnabled(true)
+                desktopLyricsEnabled = true
+                desktopLyricsOverlay.show()
+            } else {
+                openOverlayPermissionSettings()
+            }
+            updateNotification()
+        }
+    }
+
+    private fun restoreDesktopLyricsOverlay() {
+        serviceScope.launch {
+            val enabled = settingsRepository.desktopLyricsEnabled.first()
+            if (enabled && Settings.canDrawOverlays(this@MusicPlaybackService)) {
+                desktopLyricsEnabled = true
+                desktopLyricsOverlay.show()
+            } else if (enabled) {
+                desktopLyricsEnabled = false
+                settingsRepository.setDesktopLyricsEnabled(false)
+            } else {
+                desktopLyricsEnabled = false
+            }
+            updateNotification()
+        }
+    }
+
+    private fun openOverlayPermissionSettings() {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
+    }
+
+    private fun cyclePlaybackMode() {
+        val currentMode = playMusicUseCase.observePlayback().value.playbackMode
+        playMusicUseCase.setPlaybackMode(currentMode.nextMode())
+        updateNotification()
+    }
+
     private fun seekPlaybackTo(positionMs: Long) {
         val position = positionMs.coerceAtLeast(0L)
         player.seekTo(position)
@@ -255,8 +341,8 @@ class MusicPlaybackService : Service() {
         val session = mediaSession ?: return
         val metadata = MediaMetadataCompat.Builder().apply {
             putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle.ifBlank { "Music" })
-            putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist.ifBlank { "Music Player" })
-            putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum.ifBlank { getString(R.string.app_name) })
+            putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+            putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.duration.coerceAtLeast(0L))
             currentArtworkBitmap?.let { bitmap ->
                 putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap)
@@ -301,9 +387,8 @@ class MusicPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val artist = currentArtist.ifBlank { getString(R.string.app_name) }
-        val album = currentAlbum.takeIf { it.isNotBlank() }
-        val subtitle = listOfNotNull(artist, album).joinToString(" - ")
+        val songInfo = notificationSongInfo()
+        val playbackMode = playMusicUseCase.observePlayback().value.playbackMode
         val playPauseTitle = if (isPlaying) {
             getString(R.string.notification_pause)
         } else {
@@ -312,23 +397,28 @@ class MusicPlaybackService : Service() {
 
         val builder = NotificationCompat.Builder(this, PLAYBACK_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_music)
-            .setContentTitle(currentTitle.ifBlank { getString(R.string.app_name) })
-            .setContentText(subtitle)
-            .setSubText(album)
+            .setContentTitle(songInfo)
+            .setContentText("")
             .setContentIntent(contentPendingIntent)
-            .setCustomContentView(
-                buildCompactNotificationView(
-                    title = currentTitle.ifBlank { getString(R.string.app_name) },
-                    playPauseIcon = if (isPlaying) R.drawable.ic_notification_pause else R.drawable.ic_notification_play,
-                    playPauseTitle = playPauseTitle
-                )
-            )
             .setOngoing(isPlaying)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(
+                if (desktopLyricsEnabled) {
+                    R.drawable.ic_notification_desktop_lyrics_on
+                } else {
+                    R.drawable.ic_notification_desktop_lyrics
+                },
+                if (desktopLyricsEnabled) {
+                    getString(R.string.notification_desktop_lyrics_off)
+                } else {
+                    getString(R.string.notification_desktop_lyrics_on)
+                },
+                buildPendingIntent(ACTION_TOGGLE_DESKTOP_LYRICS)
+            )
             .addAction(
                 R.drawable.ic_notification_previous,
                 getString(R.string.notification_previous),
@@ -344,13 +434,26 @@ class MusicPlaybackService : Service() {
                 getString(R.string.notification_next),
                 buildPendingIntent(ACTION_NEXT)
             )
-        builder.setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .addAction(
+                playbackMode.notificationIcon(),
+                playbackMode.notificationTitle(this),
+                buildPendingIntent(ACTION_CYCLE_PLAYBACK_MODE)
+            )
+            .setStyle(
+                MediaNotificationStyle()
+                    .setMediaSession(mediaSession?.sessionToken)
+                    .setShowActionsInCompactView(1, 2, 3)
+            )
 
         currentArtworkBitmap?.let { bitmap ->
-            builder.setLargeIcon(bitmap)
-        } ?: currentArtworkUri
-            ?.takeUnless { it == failedArtworkUri }
-            ?.let(::loadArtworkAsync)
+            builder.setLargeIcon(bitmap.withLogoBadge())
+        }
+
+        if (currentArtworkBitmap == null) {
+            currentArtworkUri
+                ?.takeUnless { it == failedArtworkUri }
+                ?.let(::loadArtworkAsync)
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
@@ -359,30 +462,67 @@ class MusicPlaybackService : Service() {
         return builder.build()
     }
 
-    private fun buildCompactNotificationView(
-        title: String,
-        playPauseIcon: Int,
-        playPauseTitle: String
-    ): RemoteViews {
-        return RemoteViews(packageName, R.layout.notification_playback_compact).apply {
-            setTextViewText(R.id.notification_title, title)
-            currentArtworkBitmap?.let { bitmap ->
-                setImageViewBitmap(R.id.notification_artwork, bitmap)
-            } ?: setImageViewResource(R.id.notification_artwork, R.drawable.ic_notification_music)
-
-            setImageViewResource(R.id.notification_play_pause, playPauseIcon)
-            setOnClickPendingIntent(R.id.notification_previous, buildPendingIntent(ACTION_PREVIOUS))
-            setOnClickPendingIntent(R.id.notification_play_pause, buildPendingIntent(ACTION_TOGGLE_PLAY))
-            setOnClickPendingIntent(R.id.notification_next, buildPendingIntent(ACTION_NEXT))
-
-            setCharSequence(
-                R.id.notification_previous,
-                "setContentDescription",
-                getString(R.string.notification_previous)
-            )
-            setCharSequence(R.id.notification_play_pause, "setContentDescription", playPauseTitle)
-            setCharSequence(R.id.notification_next, "setContentDescription", getString(R.string.notification_next))
+    private fun notificationSongInfo(): String {
+        val title = currentTitle.trim()
+        val artist = currentArtist.trim()
+        return when {
+            title.isNotBlank() && artist.isNotBlank() -> "$title-$artist"
+            title.isNotBlank() -> title
+            artist.isNotBlank() -> artist
+            else -> "Music"
         }
+    }
+
+    private fun PlaybackMode.nextMode(): PlaybackMode {
+        return when (this) {
+            PlaybackMode.SEQUENTIAL -> PlaybackMode.SHUFFLE
+            PlaybackMode.SHUFFLE -> PlaybackMode.RECOMMENDATION
+            PlaybackMode.RECOMMENDATION -> PlaybackMode.SEQUENTIAL
+        }
+    }
+
+    private fun PlaybackMode.notificationIcon(): Int {
+        return when (this) {
+            PlaybackMode.SEQUENTIAL -> R.drawable.ic_notification_mode_sequential
+            PlaybackMode.SHUFFLE -> R.drawable.ic_notification_mode_shuffle
+            PlaybackMode.RECOMMENDATION -> R.drawable.ic_notification_mode_recommendation
+        }
+    }
+
+    private fun PlaybackMode.notificationTitle(context: Context): String {
+        return when (this) {
+            PlaybackMode.SEQUENTIAL -> context.getString(R.string.notification_mode_sequential)
+            PlaybackMode.SHUFFLE -> context.getString(R.string.notification_mode_shuffle)
+            PlaybackMode.RECOMMENDATION -> context.getString(R.string.notification_mode_recommendation)
+        }
+    }
+
+    private fun Bitmap.withLogoBadge(): Bitmap {
+        val result = copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(result)
+        val badgeSize = (minOf(width, height) * 0.28f).toInt().coerceAtLeast(24)
+        val badgeLeft = width - badgeSize
+        val badgeTop = height - badgeSize
+        val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+        }
+        canvas.drawCircle(
+            badgeLeft + badgeSize / 2f,
+            badgeTop + badgeSize / 2f,
+            badgeSize / 2f,
+            badgePaint
+        )
+        ContextCompat.getDrawable(this@MusicPlaybackService, R.drawable.ic_launcher_foreground)?.let { drawable ->
+            val padding = (badgeSize * 0.08f).toInt().coerceAtLeast(1)
+            drawable.setBounds(
+                badgeLeft + padding,
+                badgeTop + padding,
+                width - padding,
+                height - padding
+            )
+            drawable.draw(canvas)
+        }
+        return result
     }
 
     private fun loadArtworkAsync(uri: String) {
@@ -477,6 +617,8 @@ class MusicPlaybackService : Service() {
         private const val ACTION_TOGGLE_PLAY = "com.musicplayer.app.action.TOGGLE_PLAY"
         private const val ACTION_NEXT = "com.musicplayer.app.action.NEXT"
         private const val ACTION_PREVIOUS = "com.musicplayer.app.action.PREVIOUS"
+        private const val ACTION_TOGGLE_DESKTOP_LYRICS = "com.musicplayer.app.action.TOGGLE_DESKTOP_LYRICS"
+        private const val ACTION_CYCLE_PLAYBACK_MODE = "com.musicplayer.app.action.CYCLE_PLAYBACK_MODE"
         private const val EXTRA_URI = "extra_uri"
         private const val EXTRA_TITLE = "extra_title"
         private const val EXTRA_ARTIST = "extra_artist"
@@ -509,6 +651,10 @@ class MusicPlaybackService : Service() {
 
         fun stopIntent(context: Context): Intent {
             return Intent(context, MusicPlaybackService::class.java).setAction(ACTION_STOP)
+        }
+
+        fun toggleDesktopLyricsIntent(context: Context): Intent {
+            return Intent(context, MusicPlaybackService::class.java).setAction(ACTION_TOGGLE_DESKTOP_LYRICS)
         }
     }
 }
