@@ -116,15 +116,18 @@ class DeepSeekMetadataAdvisor @Inject constructor(
     ): AiPlaylistSuggestion? {
         val trimmedPrompt = prompt.trim()
         if (trimmedPrompt.isBlank() || songs.isEmpty()) return null
+        val candidateSongs = selectPlaylistInputSongs(trimmedPrompt, songs)
         val compactSongs = JSONArray().apply {
-            songs.take(MAX_PLAYLIST_INPUT_SONGS).forEach { song ->
+            candidateSongs.forEachIndexed { index, song ->
                 put(
                     JSONObject().apply {
+                        put("index", index)
                         put("id", song.id)
                         put("title", song.title)
                         put("artist", song.artistName)
                         put("album", song.albumTitle)
                         put("category", song.categoryTag.orEmpty())
+                        put("tags", JSONArray(song.semanticTags.take(8)))
                         put("favorite", song.isFavorite)
                         put("year", song.releaseYear ?: JSONObject.NULL)
                     }
@@ -140,24 +143,115 @@ class DeepSeekMetadataAdvisor @Inject constructor(
             apiKey = apiKey,
             model = model,
             systemPrompt = "Create a music playlist from the provided local library summary. " +
-                "Only choose songs by id from the library. Return JSON only with name, description, and songIds array. " +
-                "Do not invent song ids. Match the user's requested mood, scene, language, artist, era, or style.",
+                "Only choose songs from the library. Return JSON only with name, description, selectedIndexes array, and songIds array. " +
+                "selectedIndexes must use the zero-based index field from the library. Do not invent songs. " +
+                "Match the user's requested mood, scene, language, artist, era, or style.",
             userPrompt = input.toString()
         ) ?: return null
-        val songIds = result.optJSONArray("songIds")
-            ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) } }
-            .orEmpty()
-            .distinct()
+        val validIds = extractPlaylistSongIds(result, candidateSongs, songs, trimmedPrompt)
             .take(maxSongs.coerceIn(1, MAX_PLAYLIST_SIZE))
-        if (songIds.isEmpty()) return null
-        val libraryIds = songs.map { it.id }.toSet()
-        val validIds = songIds.filter { it in libraryIds }
         if (validIds.isEmpty()) return null
         return AiPlaylistSuggestion(
             name = result.optString("name").trim().takeIf { it.isNotBlank() } ?: "AI Mix",
             description = result.optString("description").trim().takeIf { it.isNotBlank() },
             songIds = validIds
         )
+    }
+
+    private fun selectPlaylistInputSongs(prompt: String, songs: List<Song>): List<Song> {
+        val terms = prompt.searchTerms()
+        val scored = songs.map { song -> song to song.promptMatchScore(terms) }
+        val matched = scored
+            .filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<Song, Int>> { it.second }.thenByDescending { it.first.isFavorite })
+            .map { it.first }
+        return (matched + songs)
+            .distinctBy { it.id }
+            .take(MAX_PLAYLIST_INPUT_SONGS)
+    }
+
+    private fun extractPlaylistSongIds(
+        result: JSONObject,
+        candidateSongs: List<Song>,
+        allSongs: List<Song>,
+        prompt: String
+    ): List<String> {
+        val libraryById = allSongs.associateBy { it.id }
+        val resolved = mutableListOf<String>()
+        listOf("selectedIndexes", "indexes", "indices").forEach { key ->
+            result.optJSONArray(key)?.forEachValue { value ->
+                value.asIndexOrNull()?.let { index ->
+                    candidateSongs.getOrNull(index)?.id?.let(resolved::add)
+                }
+            }
+        }
+        listOf("songIds", "ids", "songs", "tracks").forEach { key ->
+            result.optJSONArray(key)?.forEachValue { value ->
+                resolvePlaylistSongId(value, candidateSongs, libraryById)?.let(resolved::add)
+            }
+        }
+        if (resolved.isEmpty()) {
+            result.optJSONArray("titles")?.forEachValue { value ->
+                resolvePlaylistSongId(value, candidateSongs, libraryById)?.let(resolved::add)
+            }
+        }
+        val unique = resolved.distinct().filter { it in libraryById }
+        return unique.ifEmpty {
+            localPlaylistFallback(prompt, allSongs).map { it.id }
+        }
+    }
+
+    private fun resolvePlaylistSongId(
+        value: Any?,
+        candidateSongs: List<Song>,
+        libraryById: Map<String, Song>
+    ): String? {
+        return when (value) {
+            is Number -> candidateSongs.getOrNull(value.toInt())?.id
+            is String -> resolvePlaylistSongText(value, candidateSongs, libraryById)
+            is JSONObject -> {
+                value.optString("id").takeIf { it.isNotBlank() && it in libraryById }
+                    ?: value.optInt("index", -1).takeIf { it >= 0 }?.let { candidateSongs.getOrNull(it)?.id }
+                    ?: resolvePlaylistSongText(
+                        listOf(value.optString("title"), value.optString("artist"))
+                            .filter { it.isNotBlank() }
+                            .joinToString(" "),
+                        candidateSongs,
+                        libraryById
+                    )
+            }
+            else -> null
+        }
+    }
+
+    private fun resolvePlaylistSongText(
+        value: String,
+        candidateSongs: List<Song>,
+        libraryById: Map<String, Song>
+    ): String? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return null
+        if (trimmed in libraryById) return trimmed
+        trimmed.toIntOrNull()?.let { index -> candidateSongs.getOrNull(index)?.id?.let { return it } }
+        val normalized = trimmed.normalizedSearchText()
+        return candidateSongs.firstOrNull { song ->
+            song.title.normalizedSearchText() == normalized ||
+                "${song.title} ${song.artistName}".normalizedSearchText() == normalized
+        }?.id ?: candidateSongs.firstOrNull { song ->
+            normalized.contains(song.title.normalizedSearchText()) &&
+                normalized.contains(song.artistName.normalizedSearchText())
+        }?.id
+    }
+
+    private fun localPlaylistFallback(prompt: String, songs: List<Song>): List<Song> {
+        val terms = prompt.searchTerms()
+        if (terms.isEmpty()) return emptyList()
+        return songs
+            .map { it to it.promptMatchScore(terms) }
+            .filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<Song, Int>> { it.second }.thenByDescending { it.first.isFavorite })
+            .map { it.first }
+            .take(MAX_PLAYLIST_SIZE)
     }
 
     override suspend fun generateSemanticTags(
@@ -250,4 +344,56 @@ private fun String.normalizeSemanticTag(): String? {
         .filter { it.isLetterOrDigit() || it == '-' }
         .trim('-')
     return normalized.takeIf { it.length in 2..32 }
+}
+
+private fun JSONArray.forEachValue(block: (Any?) -> Unit) {
+    for (index in 0 until length()) {
+        block(opt(index))
+    }
+}
+
+private fun Any?.asIndexOrNull(): Int? {
+    return when (this) {
+        is Number -> toInt()
+        is String -> trim().toIntOrNull()
+        is JSONObject -> optInt("index", -1).takeIf { it >= 0 }
+        else -> null
+    }
+}
+
+private fun String.searchTerms(): Set<String> {
+    return normalizedSearchText()
+        .split(' ')
+        .map { it.trim() }
+        .filter { it.length >= 2 }
+        .toSet()
+}
+
+private fun String.normalizedSearchText(): String {
+    return lowercase()
+        .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+        .trim()
+        .replace(Regex("""\s+"""), " ")
+}
+
+private fun Song.promptMatchScore(terms: Set<String>): Int {
+    if (terms.isEmpty()) return 0
+    val title = title.normalizedSearchText()
+    val artist = artistName.normalizedSearchText()
+    val album = albumTitle.normalizedSearchText()
+    val category = categoryTag.orEmpty().normalizedSearchText()
+    val tags = semanticTags.joinToString(" ") { it.replace('-', ' ') }.normalizedSearchText()
+    val haystack = listOf(title, artist, album, category, tags).joinToString(" ")
+    return terms.sumOf { term ->
+        val score: Int = when {
+            title.contains(term) -> 8
+            artist.contains(term) -> 7
+            tags.contains(term) -> 6
+            category.contains(term) -> 5
+            album.contains(term) -> 3
+            haystack.contains(term) -> 1
+            else -> 0
+        }
+        score
+    }
 }
