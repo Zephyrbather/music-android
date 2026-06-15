@@ -58,6 +58,7 @@ import com.musicplayer.app.ui.player.ScrapeDetailScreen
 import com.musicplayer.app.ui.playlists.PlaylistDetailScreen
 import com.musicplayer.app.ui.playlists.PlaylistsScreen
 import com.musicplayer.app.ui.settings.AppearanceSettingsScreen
+import com.musicplayer.app.ui.settings.AiLabSettingsScreen
 import com.musicplayer.app.ui.settings.CacheSettingsScreen
 import com.musicplayer.app.ui.settings.DataManagementSettingsScreen
 import com.musicplayer.app.ui.settings.LocalLibrarySettingsScreen
@@ -93,6 +94,7 @@ private const val SETTINGS_MAIN_ROUTE = "settings/main"
 private const val SETTINGS_APPEARANCE_ROUTE = "settings/appearance"
 private const val SETTINGS_LOCAL_LIBRARY_ROUTE = "settings/local-library"
 private const val SETTINGS_SCRAPING_ROUTE = "settings/scraping"
+private const val SETTINGS_AI_LAB_ROUTE = "settings/ai-lab"
 private const val SETTINGS_CACHE_ROUTE = "settings/cache"
 private const val SETTINGS_DATA_ROUTE = "settings/data"
 private const val SETTINGS_WEBDAV_ROUTE = "settings/webdav"
@@ -223,6 +225,7 @@ fun AppNavigation() {
                                     onNavigateToAppearance = { navController.navigate(SETTINGS_APPEARANCE_ROUTE) },
                                     onNavigateToLocalLibrary = { navController.navigate(SETTINGS_LOCAL_LIBRARY_ROUTE) },
                                     onNavigateToScraping = { navController.navigate(SETTINGS_SCRAPING_ROUTE) },
+                                    onNavigateToAiLab = { navController.navigate(SETTINGS_AI_LAB_ROUTE) },
                                     onNavigateToCache = { navController.navigate(SETTINGS_CACHE_ROUTE) },
                                     onNavigateToDataManagement = { navController.navigate(SETTINGS_DATA_ROUTE) },
                                     onNavigateToWebDav = { navController.navigate(SETTINGS_WEBDAV_ROUTE) }
@@ -242,6 +245,12 @@ fun AppNavigation() {
                             }
                             composable(SETTINGS_SCRAPING_ROUTE) {
                                 ScrapingSettingsScreen(
+                                    onBack = navController::navigateUp,
+                                    viewModel = settingsViewModel
+                                )
+                            }
+                            composable(SETTINGS_AI_LAB_ROUTE) {
+                                AiLabSettingsScreen(
                                     onBack = navController::navigateUp,
                                     viewModel = settingsViewModel
                                 )

@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.FileDownload
@@ -70,6 +71,7 @@ fun SettingsScreen(
     onNavigateToAppearance: () -> Unit = {},
     onNavigateToLocalLibrary: () -> Unit = {},
     onNavigateToScraping: () -> Unit = {},
+    onNavigateToAiLab: () -> Unit = {},
     onNavigateToCache: () -> Unit = {},
     onNavigateToDataManagement: () -> Unit = {},
     onNavigateToWebDav: () -> Unit = {},
@@ -103,6 +105,14 @@ fun SettingsScreen(
                 description = strings.scrapingDesc,
                 icon = Icons.Outlined.Search,
                 onClick = onNavigateToScraping
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = strings.aiLab,
+                description = strings.aiLabDesc,
+                icon = Icons.Outlined.AutoAwesome,
+                onClick = onNavigateToAiLab
             )
         }
         item {
@@ -333,8 +343,6 @@ fun ScrapingSettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val workState by viewModel.workState.collectAsStateWithLifecycle()
     val hasResumableScrape by viewModel.hasResumableScrape.collectAsStateWithLifecycle()
-    val semanticTagResult by viewModel.aiSemanticTagResult.collectAsStateWithLifecycle()
-    val generatingSemanticTags by viewModel.generatingSemanticTags.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
 
     SettingsPage(
@@ -356,6 +364,87 @@ fun ScrapingSettingsScreen(
                 )
                 AssistChip(onClick = {}, label = { Text(strings.lyricsSources) })
                 AssistChip(onClick = {}, label = { Text(strings.artworkSources) })
+            }
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.autoScrape,
+                description = strings.autoScrapeDesc,
+                checked = state.autoScrape,
+                onCheckedChange = viewModel::setAutoScrape
+            )
+        }
+        item {
+            Button(
+                onClick = viewModel::scrapeMissingMetadata,
+                enabled = !workState.running,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(strings.scrapeAllMissing)
+            }
+        }
+        if (hasResumableScrape && !workState.running) {
+            item {
+                Button(
+                    onClick = viewModel::resumeScrape,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(strings.scrapeResume)
+                }
+            }
+        }
+        if (workState.type == LibraryWorkType.SCRAPE && (workState.running || workState.lastResult != null)) {
+            item {
+                val finishedSkipped = (workState.total - workState.updated - workState.failed).coerceAtLeast(0)
+                val runningSkipped = (workState.completed - workState.updated - workState.failed).coerceAtLeast(0)
+                val finishedText = "${strings.scrapeFinishedPrefix}${workState.updated}" +
+                    "${strings.scrapeFinishedSkippedMiddle}${finishedSkipped}" +
+                    "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
+                WorkProgressPanel(
+                    workState = workState,
+                    runningText = strings.scrapeRunning,
+                    finishedText = finishedText,
+                    supportingText = if (workState.running) {
+                        "${strings.scrapeBackgroundHint}\n${strings.scrapeFinishedPrefix}${workState.updated}" +
+                            "${strings.scrapeFinishedSkippedMiddle}${runningSkipped}" +
+                            "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
+                    } else {
+                        null
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AiLabSettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val semanticTagResult by viewModel.aiSemanticTagResult.collectAsStateWithLifecycle()
+    val generatingSemanticTags by viewModel.generatingSemanticTags.collectAsStateWithLifecycle()
+    val strings = LocalStrings.current
+
+    SettingsPage(
+        title = strings.aiLab,
+        onBack = onBack,
+        modifier = modifier
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = strings.aiLabDesc,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = strings.aiFeaturesDesc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         item {
@@ -451,14 +540,6 @@ fun ScrapingSettingsScreen(
         }
         item {
             SettingSwitchRow(
-                title = strings.autoScrape,
-                description = strings.autoScrapeDesc,
-                checked = state.autoScrape,
-                onCheckedChange = viewModel::setAutoScrape
-            )
-        }
-        item {
-            SettingSwitchRow(
                 title = strings.backgroundAiScrape,
                 description = strings.backgroundAiScrapeDesc,
                 checked = state.backgroundAiScrape,
@@ -474,46 +555,6 @@ fun ScrapingSettingsScreen(
                 onCheckedChange = viewModel::setAiCategoryScrape,
                 enabled = (state.aiFeaturesEnabled && state.aiApiKey.isNotBlank()) || state.aiCategoryScrape
             )
-        }
-        item {
-            Button(
-                onClick = viewModel::scrapeMissingMetadata,
-                enabled = !workState.running,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(strings.scrapeAllMissing)
-            }
-        }
-        if (hasResumableScrape && !workState.running) {
-            item {
-                Button(
-                    onClick = viewModel::resumeScrape,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(strings.scrapeResume)
-                }
-            }
-        }
-        if (workState.type == LibraryWorkType.SCRAPE && (workState.running || workState.lastResult != null)) {
-            item {
-                val finishedSkipped = (workState.total - workState.updated - workState.failed).coerceAtLeast(0)
-                val runningSkipped = (workState.completed - workState.updated - workState.failed).coerceAtLeast(0)
-                val finishedText = "${strings.scrapeFinishedPrefix}${workState.updated}" +
-                    "${strings.scrapeFinishedSkippedMiddle}${finishedSkipped}" +
-                    "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
-                WorkProgressPanel(
-                    workState = workState,
-                    runningText = strings.scrapeRunning,
-                    finishedText = finishedText,
-                    supportingText = if (workState.running) {
-                        "${strings.scrapeBackgroundHint}\n${strings.scrapeFinishedPrefix}${workState.updated}" +
-                            "${strings.scrapeFinishedSkippedMiddle}${runningSkipped}" +
-                            "${strings.scrapeFinishedMiddle}${workState.failed}${strings.scrapeFinishedSuffix}"
-                    } else {
-                        null
-                    }
-                )
-            }
         }
     }
 }
