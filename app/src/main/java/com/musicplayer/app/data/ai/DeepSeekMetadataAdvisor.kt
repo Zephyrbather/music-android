@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.random.Random
 
 @Singleton
 class DeepSeekMetadataAdvisor @Inject constructor(
@@ -116,7 +117,8 @@ class DeepSeekMetadataAdvisor @Inject constructor(
     ): AiPlaylistSuggestion? {
         val trimmedPrompt = prompt.trim()
         if (trimmedPrompt.isBlank() || songs.isEmpty()) return null
-        val candidateSongs = selectPlaylistInputSongs(trimmedPrompt, songs)
+        val diversitySeed = Random.nextLong()
+        val candidateSongs = selectPlaylistInputSongs(trimmedPrompt, songs, diversitySeed)
         val compactSongs = JSONArray().apply {
             candidateSongs.forEachIndexed { index, song ->
                 put(
@@ -137,6 +139,7 @@ class DeepSeekMetadataAdvisor @Inject constructor(
         val input = JSONObject().apply {
             put("request", trimmedPrompt)
             put("maxSongs", maxSongs.coerceIn(1, MAX_PLAYLIST_SIZE))
+            put("diversitySeed", diversitySeed)
             put("library", compactSongs)
         }
         val result = completeJson(
@@ -145,8 +148,10 @@ class DeepSeekMetadataAdvisor @Inject constructor(
             systemPrompt = "Create a music playlist from the provided local library summary. " +
                 "Only choose songs from the library. Return JSON only with name, description, selectedIndexes array, and songIds array. " +
                 "selectedIndexes must use the zero-based index field from the library. Do not invent songs. " +
+                "Prefer a fresh mix across repeated requests and avoid always choosing the first matching songs. " +
                 "Match the user's requested mood, scene, language, artist, era, or style.",
-            userPrompt = input.toString()
+            userPrompt = input.toString(),
+            temperature = PLAYLIST_TEMPERATURE
         ) ?: return null
         val validIds = extractPlaylistSongIds(result, candidateSongs, songs, trimmedPrompt)
             .take(maxSongs.coerceIn(1, MAX_PLAYLIST_SIZE))
@@ -158,14 +163,38 @@ class DeepSeekMetadataAdvisor @Inject constructor(
         )
     }
 
-    private fun selectPlaylistInputSongs(prompt: String, songs: List<Song>): List<Song> {
+    private fun selectPlaylistInputSongs(prompt: String, songs: List<Song>, diversitySeed: Long): List<Song> {
         val terms = prompt.searchTerms()
         val scored = songs.map { song -> song to song.promptMatchScore(terms) }
-        val matched = scored
+        val random = Random(diversitySeed)
+        val stronglyMatched = scored
             .filter { it.second > 0 }
-            .sortedWith(compareByDescending<Pair<Song, Int>> { it.second }.thenByDescending { it.first.isFavorite })
+            .sortedWith(
+                compareByDescending<Pair<Song, Int>> { it.second }
+                    .thenByDescending { it.first.isFavorite }
+                    .thenBy { random.nextInt() }
+            )
             .map { it.first }
-        return (matched + songs)
+
+        val taggedOrCategorized = songs
+            .filter { it.semanticTags.isNotEmpty() || !it.categoryTag.isNullOrBlank() }
+            .shuffled(random)
+        val favorites = songs
+            .filter { it.isFavorite }
+            .shuffled(random)
+        val recent = songs
+            .sortedByDescending { it.dateAddedEpochMs }
+            .take(MAX_PLAYLIST_INPUT_SONGS)
+            .shuffled(random)
+        val exploration = songs.shuffled(random)
+
+        return (
+            stronglyMatched.take(PLAYLIST_MATCHED_INPUT_COUNT) +
+                taggedOrCategorized.take(PLAYLIST_TAGGED_INPUT_COUNT) +
+                favorites.take(PLAYLIST_FAVORITE_INPUT_COUNT) +
+                recent.take(PLAYLIST_RECENT_INPUT_COUNT) +
+                exploration
+            )
             .distinctBy { it.id }
             .take(MAX_PLAYLIST_INPUT_SONGS)
     }
@@ -246,10 +275,15 @@ class DeepSeekMetadataAdvisor @Inject constructor(
     private fun localPlaylistFallback(prompt: String, songs: List<Song>): List<Song> {
         val terms = prompt.searchTerms()
         if (terms.isEmpty()) return emptyList()
+        val random = Random(System.nanoTime())
         return songs
             .map { it to it.promptMatchScore(terms) }
             .filter { it.second > 0 }
-            .sortedWith(compareByDescending<Pair<Song, Int>> { it.second }.thenByDescending { it.first.isFavorite })
+            .sortedWith(
+                compareByDescending<Pair<Song, Int>> { it.second }
+                    .thenByDescending { it.first.isFavorite }
+                    .thenBy { random.nextInt() }
+            )
             .map { it.first }
             .take(MAX_PLAYLIST_SIZE)
     }
@@ -286,7 +320,8 @@ class DeepSeekMetadataAdvisor @Inject constructor(
         apiKey: String,
         model: String,
         systemPrompt: String,
-        userPrompt: String
+        userPrompt: String,
+        temperature: Double = DEFAULT_TEMPERATURE
     ): JSONObject? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext null
         val requestBody = JSONObject().apply {
@@ -299,6 +334,7 @@ class DeepSeekMetadataAdvisor @Inject constructor(
                 }
             )
             put("response_format", JSONObject().put("type", "json_object"))
+            put("temperature", temperature)
         }
         val request = Request.Builder()
             .url(API_URL)
@@ -329,8 +365,14 @@ class DeepSeekMetadataAdvisor @Inject constructor(
     private companion object {
         const val API_URL = "https://api.deepseek.com/chat/completions"
         const val DEFAULT_MODEL = "deepseek-v4-flash"
+        const val DEFAULT_TEMPERATURE = 0.2
+        const val PLAYLIST_TEMPERATURE = 0.85
         const val MAX_PLAYLIST_INPUT_SONGS = 200
         const val MAX_PLAYLIST_SIZE = 50
+        const val PLAYLIST_MATCHED_INPUT_COUNT = 120
+        const val PLAYLIST_TAGGED_INPUT_COUNT = 40
+        const val PLAYLIST_FAVORITE_INPUT_COUNT = 25
+        const val PLAYLIST_RECENT_INPUT_COUNT = 25
         const val MAX_LYRICS_EXCERPT_CHARS = 1200
         const val MAX_SEMANTIC_TAGS = 8
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
