@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -478,13 +479,18 @@ private fun SongActionSheet(
             Divider()
             val progress = downloadProgress
             val progressText = if (progress.total > 1) " (${progress.completed}/${progress.total})" else ""
+            val failed = song.id in progress.failedIds
             ListItem(
-                headlineContent = { Text(strings.download + progressText) },
+                headlineContent = { Text(if (failed) strings.downloadFailed else strings.download + progressText) },
                 leadingContent = {
                     if (isDownloading) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Outlined.Download, contentDescription = null)
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = null,
+                            tint = if (failed) MaterialTheme.colorScheme.error else LocalContentColor.current
+                        )
                     }
                 },
                 modifier = Modifier.clickable(enabled = !isDownloading) { onDownload() }

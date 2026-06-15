@@ -6,6 +6,7 @@ data class PlaybackState(
     val isPlaying: Boolean = false,
     val positionMs: Long = 0L,
     val durationMs: Long = currentSong?.durationMs ?: 0L,
+    val errorMessage: String? = null,
     val playbackMode: PlaybackMode = PlaybackMode.SEQUENTIAL,
     val repeatMode: RepeatMode = RepeatMode.OFF
 )

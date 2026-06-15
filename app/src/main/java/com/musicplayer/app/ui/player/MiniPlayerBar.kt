@@ -87,9 +87,13 @@ fun MiniPlayerBar(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = song.artistName,
+                        text = playbackState.errorMessage ?: song.artistName,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (playbackState.errorMessage == null) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

@@ -9,9 +9,10 @@ class ScanLibraryUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(onBatch: suspend (List<Song>) -> Unit = {}): List<Song> {
         val songs = musicRepository.scanLocalLibrary { batch ->
-            musicRepository.upsertSongs(batch)
+            musicRepository.upsertSongs(batch, rebuildLibraryArtwork = false)
             onBatch(batch)
         }
+        musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
         return songs
     }
 }

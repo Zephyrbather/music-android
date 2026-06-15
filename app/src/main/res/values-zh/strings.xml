@@ -2,6 +2,7 @@
     <string name="app_name">Zephyr music</string>
     <string name="playback_channel_name">播放</string>
     <string name="playback_channel_description">音乐播放控制</string>
+    <string name="playback_error">播放失败，请检查文件或网络</string>
     <string name="notification_previous">上一首</string>
     <string name="notification_play">播放</string>
     <string name="notification_pause">暂停</string>

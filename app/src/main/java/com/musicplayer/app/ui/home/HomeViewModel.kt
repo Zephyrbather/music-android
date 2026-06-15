@@ -201,13 +201,21 @@ class HomeViewModel @Inject constructor(
                 return@launch
             }
             _downloadProgress.value = DownloadProgress(total = 1, completed = 0, downloadingIds = setOf(song.id))
-            val downloaded = withContext(Dispatchers.IO) {
-                webDavRepository.downloadSong(song, outputDir)
-            }
+            val downloaded = runCatching {
+                withContext(Dispatchers.IO) {
+                    webDavRepository.downloadSong(song, outputDir)
+                }
+            }.getOrDefault(false)
             if (downloaded) {
                 musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
             }
-            _downloadProgress.value = DownloadProgress(total = 1, completed = 1, downloadingIds = emptySet())
+            _downloadProgress.value = DownloadProgress(
+                total = 1,
+                completed = if (downloaded) 1 else 0,
+                failed = if (downloaded) 0 else 1,
+                downloadingIds = emptySet(),
+                failedIds = if (downloaded) emptySet() else setOf(song.id)
+            )
         }
     }
 

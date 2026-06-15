@@ -34,7 +34,7 @@ import com.musicplayer.app.data.local.entity.WebDavServerEntity
         CommentEntity::class,
         PlayRecordEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

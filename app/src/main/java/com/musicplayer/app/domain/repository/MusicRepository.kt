@@ -12,7 +12,7 @@ interface MusicRepository {
     fun observeAlbums(): Flow<List<Album>>
     fun observeArtists(): Flow<List<Artist>>
     fun observeSong(songId: String): Flow<Song?>
-    suspend fun upsertSongs(songs: List<Song>)
+    suspend fun upsertSongs(songs: List<Song>, rebuildLibraryArtwork: Boolean = true)
     suspend fun saveScrapedMetadata(
         song: Song,
         mode: ScrapeSearchMode = ScrapeSearchMode.ALL,

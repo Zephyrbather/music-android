@@ -6,11 +6,6 @@ import javax.inject.Singleton
 
 @Singleton
 class CpuPerformanceManager @Inject constructor() {
-    
-    fun boostPlaybackThread() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-    }
-    
     fun setBackgroundPriority() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
     }

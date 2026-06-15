@@ -71,7 +71,9 @@ data class LibraryUiState(
 data class DownloadProgress(
     val total: Int = 0,
     val completed: Int = 0,
-    val downloadingIds: Set<String> = emptySet()
+    val failed: Int = 0,
+    val downloadingIds: Set<String> = emptySet(),
+    val failedIds: Set<String> = emptySet()
 )
 
 @HiltViewModel
@@ -210,13 +212,21 @@ class LibraryViewModel @Inject constructor(
                 return@launch
             }
             _downloadProgress.value = DownloadProgress(total = 1, completed = 0, downloadingIds = setOf(song.id))
-            val downloaded = withContext(Dispatchers.IO) {
-                webDavRepository.downloadSong(song, outputDir)
-            }
+            val downloaded = runCatching {
+                withContext(Dispatchers.IO) {
+                    webDavRepository.downloadSong(song, outputDir)
+                }
+            }.getOrDefault(false)
             if (downloaded) {
                 musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
             }
-            _downloadProgress.value = DownloadProgress(total = 1, completed = 1, downloadingIds = emptySet())
+            _downloadProgress.value = DownloadProgress(
+                total = 1,
+                completed = if (downloaded) 1 else 0,
+                failed = if (downloaded) 0 else 1,
+                downloadingIds = emptySet(),
+                failedIds = if (downloaded) emptySet() else setOf(song.id)
+            )
         }
     }
 
@@ -229,21 +239,34 @@ class LibraryViewModel @Inject constructor(
                 .filter { it.uri.substringAfterLast('/') !in localFileNames }
             if (toDownload.isEmpty()) return@launch
             var completed = 0
+            var failed = 0
+            var needsArtworkRebuild = false
+            val failedIds = mutableSetOf<String>()
             val allIds = toDownload.map { it.id }.toSet()
             _downloadProgress.value = DownloadProgress(total = toDownload.size, completed = 0, downloadingIds = allIds)
             for (song in toDownload) {
-                val downloaded = withContext(Dispatchers.IO) {
-                    webDavRepository.downloadSong(song, outputDir)
-                }
+                val downloaded = runCatching {
+                    withContext(Dispatchers.IO) {
+                        webDavRepository.downloadSong(song, outputDir)
+                    }
+                }.getOrDefault(false)
                 if (downloaded) {
-                    musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
+                    completed++
+                    needsArtworkRebuild = true
+                } else {
+                    failed++
+                    failedIds += song.id
                 }
-                completed++
                 _downloadProgress.value = DownloadProgress(
                     total = toDownload.size,
                     completed = completed,
-                    downloadingIds = if (completed >= toDownload.size) emptySet() else allIds
+                    failed = failed,
+                    downloadingIds = if (completed + failed >= toDownload.size) emptySet() else allIds - failedIds,
+                    failedIds = failedIds.toSet()
                 )
+            }
+            if (needsArtworkRebuild) {
+                musicRepository.rebuildLibraryArtwork(fetchArtistArtwork = false)
             }
         }
     }

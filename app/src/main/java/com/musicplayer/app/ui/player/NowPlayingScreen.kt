@@ -198,6 +198,16 @@ fun NowPlayingScreen(
                     )
                 }
             }
+            playbackState.errorMessage?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         Spacer(modifier = Modifier.weight(0.1f))
         LyricsPreview(

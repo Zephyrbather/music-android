@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -15,27 +14,27 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
-import android.support.v4.media.MediaMetadataCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import androidx.media.app.NotificationCompat.MediaStyle as MediaNotificationStyle
 import com.musicplayer.app.MainActivity
 import com.musicplayer.app.R
 import com.musicplayer.app.domain.model.PlaybackMode
-import com.musicplayer.app.performance.CpuPerformanceManager
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
@@ -43,7 +42,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.net.URL
 import javax.inject.Inject
-import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,13 +50,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class MusicPlaybackService : Service() {
+class MusicPlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
-    private var mediaSession: MediaSessionCompat? = null
+    private var mediaSession: MediaSession? = null
     @Inject lateinit var playMusicUseCase: PlayMusicUseCase
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var equalizerController: EqualizerController
-    @Inject lateinit var cpuPerformanceManager: CpuPerformanceManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -72,6 +69,14 @@ class MusicPlaybackService : Service() {
     private var failedArtworkUri: String? = null
     private var isPlaying: Boolean = false
     private var desktopLyricsEnabled: Boolean = false
+    private val progressSyncRunnable = object : Runnable {
+        override fun run() {
+            syncPlaybackPosition()
+            if (isPlaying) {
+                mainHandler.postDelayed(this, PROGRESS_SYNC_INTERVAL_MS)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -95,9 +100,6 @@ class MusicPlaybackService : Service() {
             .setLoadControl(loadControl)
             .setHandleAudioBecomingNoisy(true)
             .build()
-        thread(name = "PlaybackPriorityBoost") {
-            cpuPerformanceManager.boostPlaybackThread()
-        }
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 equalizerController.attach(audioSessionId)
@@ -107,6 +109,7 @@ class MusicPlaybackService : Service() {
                 when (playbackState) {
                     Player.STATE_READY -> {
                         updateMediaMetadata()
+                        syncPlaybackPosition()
                         updatePlaybackState()
                         updateNotification()
                     }
@@ -117,6 +120,7 @@ class MusicPlaybackService : Service() {
                         } else {
                             isPlaying = false
                             playMusicUseCase.setPlaying(false)
+                            syncPlaybackPosition()
                             updatePlaybackState()
                             updateNotification()
                             stopForeground(STOP_FOREGROUND_DETACH)
@@ -125,9 +129,21 @@ class MusicPlaybackService : Service() {
                 }
             }
 
+            override fun onPlayerError(error: PlaybackException) {
+                Log.w(TAG, "Playback failed", error)
+                isPlaying = false
+                playMusicUseCase.setPlaybackError(getString(R.string.playback_error))
+                syncPlaybackPosition()
+                mainHandler.removeCallbacks(progressSyncRunnable)
+                updatePlaybackState()
+                updateNotification()
+            }
+
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
                 playMusicUseCase.setPlaying(playing)
+                syncPlaybackPosition()
+                scheduleProgressSync()
                 updatePlaybackState()
                 updateNotification()
             }
@@ -143,31 +159,14 @@ class MusicPlaybackService : Service() {
 
     private fun initMediaSession() {
         runCatching {
-            mediaSession = MediaSessionCompat(this, "MusicPlayback").apply {
-                setCallback(object : MediaSessionCompat.Callback() {
-                    override fun onPlay() { resumePlayback() }
-                    override fun onPause() { pausePlayback() }
-                    override fun onSkipToNext() {
-                        playMusicUseCase.skipNext()?.let { playSong(it) }
-                    }
-                    override fun onSkipToPrevious() {
-                        if (player.currentPosition > RESTART_THRESHOLD_MS) seekPlaybackTo(0L)
-                        else playMusicUseCase.skipPrevious()?.let { playSong(it) }
-                    }
-                    override fun onSeekTo(pos: Long) {
-                        seekPlaybackTo(pos)
-                    }
-                    override fun onStop() {
-                        pausePlayback()
-                        stopForeground(STOP_FOREGROUND_DETACH)
-                    }
-                })
-                isActive = true
-            }
+            mediaSession = MediaSession.Builder(this, SessionPlayer(player))
+                .setId("MusicPlayback")
+                .build()
         }.onFailure { Log.w(TAG, "MediaSession init failed", it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val startResult = super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_PLAY -> {
                 val uri = intent.getStringExtra(EXTRA_URI).orEmpty()
@@ -226,17 +225,24 @@ class MusicPlaybackService : Service() {
                 cyclePlaybackMode()
             }
         }
-        return START_STICKY
+        return startResult
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        return mediaSession
+    }
 
     override fun onDestroy() {
-        mediaSession?.isActive = false
-        mediaSession?.release()
+        mediaSession?.let { session ->
+            if (isSessionAdded(session)) {
+                removeSession(session)
+            }
+            session.release()
+        }
         mediaSession = null
         desktopLyricsOverlay.release()
         equalizerController.release()
+        mainHandler.removeCallbacks(progressSyncRunnable)
         serviceScope.cancel()
         player.release()
         super.onDestroy()
@@ -245,12 +251,15 @@ class MusicPlaybackService : Service() {
     private fun playUri(uri: String) {
         val currentUri = player.currentMediaItem?.localConfiguration?.uri.toString()
         if (currentUri != uri) {
-            player.setMediaItem(MediaItem.fromUri(uri))
+            player.setMediaItem(buildMediaItem(uri))
             player.prepare()
         }
         player.play()
         isPlaying = true
         playMusicUseCase.setPlaying(true)
+        playMusicUseCase.setPlaybackError(null)
+        syncPlaybackPosition()
+        scheduleProgressSync()
     }
 
     private fun playSong(song: Song) {
@@ -259,11 +268,14 @@ class MusicPlaybackService : Service() {
         currentArtist = song.artistName
         currentAlbum = song.albumTitle
         setCurrentArtwork(song.artworkUri)
-        player.setMediaItem(MediaItem.fromUri(song.uri))
+        player.setMediaItem(buildMediaItem(song.uri))
         player.prepare()
         player.play()
         isPlaying = true
         playMusicUseCase.setPlaying(true)
+        playMusicUseCase.setPlaybackError(null)
+        syncPlaybackPosition()
+        scheduleProgressSync()
         updateMediaMetadata()
         updateNotification()
     }
@@ -272,6 +284,8 @@ class MusicPlaybackService : Service() {
         player.pause()
         isPlaying = false
         playMusicUseCase.setPlaying(false)
+        syncPlaybackPosition()
+        mainHandler.removeCallbacks(progressSyncRunnable)
         updatePlaybackState()
         updateNotification()
     }
@@ -281,6 +295,9 @@ class MusicPlaybackService : Service() {
         player.play()
         isPlaying = true
         playMusicUseCase.setPlaying(true)
+        playMusicUseCase.setPlaybackError(null)
+        syncPlaybackPosition()
+        scheduleProgressSync()
         updatePlaybackState()
         updateNotification()
     }
@@ -340,9 +357,22 @@ class MusicPlaybackService : Service() {
     private fun seekPlaybackTo(positionMs: Long) {
         val position = positionMs.coerceAtLeast(0L)
         player.seekTo(position)
-        playMusicUseCase.seekTo(position)
+        syncPlaybackPosition(position)
         updatePlaybackState()
         updateNotification()
+    }
+
+    private fun scheduleProgressSync() {
+        mainHandler.removeCallbacks(progressSyncRunnable)
+        if (isPlaying) {
+            mainHandler.postDelayed(progressSyncRunnable, PROGRESS_SYNC_INTERVAL_MS)
+        }
+    }
+
+    private fun syncPlaybackPosition(positionOverrideMs: Long? = null) {
+        val durationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+        val positionMs = positionOverrideMs ?: player.currentPosition
+        playMusicUseCase.updatePlaybackPosition(positionMs, durationMs)
     }
 
     private fun setCurrentArtwork(uri: String?) {
@@ -354,37 +384,26 @@ class MusicPlaybackService : Service() {
         failedArtworkUri = null
     }
 
+    private fun buildMediaItem(uri: String): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(currentTitle.ifBlank { "Music" })
+            .setArtist(currentArtist)
+            .setAlbumTitle(currentAlbum)
+            .setArtworkUri(currentArtworkUri?.let(Uri::parse))
+            .build()
+        return MediaItem.Builder()
+            .setUri(uri)
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
     private fun updateMediaMetadata() {
-        val session = mediaSession ?: return
-        val metadata = MediaMetadataCompat.Builder().apply {
-            putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle.ifBlank { "Music" })
-            putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-            putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
-            putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.duration.coerceAtLeast(0L))
-            currentArtworkBitmap?.let { bitmap ->
-                putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap)
-                putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bitmap)
-            }
-        }.build()
-        session.setMetadata(metadata)
+        val currentUri = player.currentMediaItem?.localConfiguration?.uri ?: return
+        player.replaceMediaItem(player.currentMediaItemIndex, buildMediaItem(currentUri.toString()))
     }
 
     private fun updatePlaybackState() {
-        val session = mediaSession ?: return
-        val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING
-        else PlaybackStateCompat.STATE_PAUSED
-        val builder = PlaybackStateCompat.Builder()
-            .setState(state, player.currentPosition.coerceAtLeast(0L), 1.0f)
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                    PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                    PlaybackStateCompat.ACTION_SEEK_TO or
-                    PlaybackStateCompat.ACTION_STOP
-            )
-        session.setPlaybackState(builder.build())
+        // Media3 publishes playback state directly from the player.
     }
 
     private fun updateNotification() {
@@ -458,7 +477,7 @@ class MusicPlaybackService : Service() {
             )
             .setStyle(
                 MediaNotificationStyle()
-                    .setMediaSession(mediaSession?.sessionToken)
+                    .setMediaSession(mediaSession?.sessionCompatToken)
                     .setShowActionsInCompactView(1, 2, 3)
             )
 
@@ -545,7 +564,7 @@ class MusicPlaybackService : Service() {
     private fun loadArtworkAsync(uri: String) {
         if (loadingArtworkUri == uri) return
         loadingArtworkUri = uri
-        thread(name = "PlaybackArtworkLoader") {
+        Thread {
             val bitmap = loadArtwork(uri)
             mainHandler.post {
                 if (currentArtworkUri == uri) {
@@ -562,7 +581,7 @@ class MusicPlaybackService : Service() {
                     loadingArtworkUri = null
                 }
             }
-        }
+        }.apply { name = "PlaybackArtworkLoader" }.start()
     }
 
     private fun loadArtwork(uri: String): Bitmap? {
@@ -623,6 +642,65 @@ class MusicPlaybackService : Service() {
         manager.createNotificationChannel(channel)
     }
 
+    private inner class SessionPlayer(player: Player) : ForwardingPlayer(player) {
+        override fun play() {
+            resumePlayback()
+        }
+
+        override fun pause() {
+            pausePlayback()
+        }
+
+        override fun seekTo(positionMs: Long) {
+            seekPlaybackTo(positionMs)
+        }
+
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            seekPlaybackTo(positionMs)
+        }
+
+        override fun seekToNext() {
+            playMusicUseCase.skipNext()?.let(::playSong)
+        }
+
+        override fun seekToNextMediaItem() {
+            seekToNext()
+        }
+
+        override fun seekToNextWindow() {
+            seekToNext()
+        }
+
+        override fun next() {
+            seekToNext()
+        }
+
+        override fun seekToPrevious() {
+            if (player.currentPosition > RESTART_THRESHOLD_MS) {
+                seekPlaybackTo(0L)
+            } else {
+                playMusicUseCase.skipPrevious()?.let(::playSong)
+            }
+        }
+
+        override fun seekToPreviousMediaItem() {
+            seekToPrevious()
+        }
+
+        override fun seekToPreviousWindow() {
+            seekToPrevious()
+        }
+
+        override fun previous() {
+            seekToPrevious()
+        }
+
+        override fun stop() {
+            pausePlayback()
+            stopForeground(STOP_FOREGROUND_DETACH)
+        }
+    }
+
     companion object {
         private const val TAG = "MusicPlaybackSvc"
         private const val PLAYBACK_CHANNEL_ID = "music_playback"
@@ -643,6 +721,7 @@ class MusicPlaybackService : Service() {
         private const val EXTRA_ARTWORK_URI = "extra_artwork_uri"
         private const val EXTRA_POSITION_MS = "extra_position_ms"
         private const val RESTART_THRESHOLD_MS = 3_000L
+        private const val PROGRESS_SYNC_INTERVAL_MS = 500L
         private const val ARTWORK_TIMEOUT_MS = 5_000
         private const val MAX_ARTWORK_SIZE_PX = 512
 

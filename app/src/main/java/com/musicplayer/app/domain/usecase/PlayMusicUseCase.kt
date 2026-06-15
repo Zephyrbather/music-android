@@ -1,7 +1,6 @@
 package com.musicplayer.app.domain.usecase
 
 import com.musicplayer.app.data.local.dao.PlayRecordDao
-import com.musicplayer.app.performance.CpuPerformanceManager
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.Song
@@ -15,21 +14,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PlayMusicUseCase @Inject constructor(
     private val playRecordDao: PlayRecordDao,
-    private val settingsRepository: SettingsRepository,
-    private val cpuPerformanceManager: CpuPerformanceManager
+    private val settingsRepository: SettingsRepository
 ) {
     private val playbackState = MutableStateFlow(PlaybackState())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile
+    private var topListenedSongIds: Set<String> = emptySet()
 
     init {
-        cpuPerformanceManager.boostPlaybackThread()
         scope.launch {
             settingsRepository.playbackMode.distinctUntilChanged().collect { mode ->
                 playbackState.update { state ->
@@ -39,21 +37,8 @@ class PlayMusicUseCase @Inject constructor(
         }
         scope.launch {
             while (true) {
-                delay(1_000L)
-                playbackState.update { state ->
-                    if (!state.isPlaying || state.currentSong == null) {
-                        state
-                    } else {
-                        val duration = state.durationMs.takeIf { it > 0L } ?: state.currentSong.durationMs
-                        val nextPosition = (state.positionMs + 1_000L).coerceAtMost(duration.takeIf { it > 0L } ?: Long.MAX_VALUE)
-                        if (duration > 0L && nextPosition >= duration) {
-                            skipNext()
-                            state
-                        } else {
-                            state.copy(positionMs = nextPosition)
-                        }
-                    }
-                }
+                refreshTopListenedSongIds()
+                delay(TOP_LISTENED_REFRESH_MS)
             }
         }
     }
@@ -67,7 +52,8 @@ class PlayMusicUseCase @Inject constructor(
                 queue = queue.ifEmpty { listOf(song) },
                 isPlaying = true,
                 positionMs = 0L,
-                durationMs = song.durationMs
+                durationMs = song.durationMs,
+                errorMessage = null
             )
         }
     }
@@ -80,7 +66,8 @@ class PlayMusicUseCase @Inject constructor(
                 queue = queue,
                 isPlaying = true,
                 positionMs = 0L,
-                durationMs = song.durationMs
+                durationMs = song.durationMs,
+                errorMessage = null
             )
         }
     }
@@ -93,7 +80,8 @@ class PlayMusicUseCase @Inject constructor(
             state.copy(
                 currentSong = song,
                 queue = queue,
-                durationMs = song.durationMs
+                durationMs = song.durationMs,
+                errorMessage = null
             )
         }
     }
@@ -133,7 +121,8 @@ class PlayMusicUseCase @Inject constructor(
                 currentSong = next,
                 isPlaying = next != null,
                 positionMs = 0L,
-                durationMs = next?.durationMs ?: 0L
+                durationMs = next?.durationMs ?: 0L,
+                errorMessage = null
             )
         }
         return selected
@@ -149,7 +138,8 @@ class PlayMusicUseCase @Inject constructor(
                 currentSong = previous,
                 isPlaying = previous != null,
                 positionMs = 0L,
-                durationMs = previous?.durationMs ?: 0L
+                durationMs = previous?.durationMs ?: 0L,
+                errorMessage = null
             )
         }
         return selected
@@ -169,6 +159,22 @@ class PlayMusicUseCase @Inject constructor(
         }
     }
 
+    fun updatePlaybackPosition(positionMs: Long, durationMs: Long) {
+        playbackState.update { state ->
+            val duration = durationMs
+                .takeIf { it > 0L }
+                ?: state.currentSong?.durationMs
+                ?: state.durationMs
+            val position = positionMs
+                .coerceAtLeast(0L)
+                .let { if (duration > 0L) it.coerceAtMost(duration) else it }
+            state.copy(
+                positionMs = position,
+                durationMs = duration.takeIf { it > 0L } ?: 0L
+            )
+        }
+    }
+
     fun playNext(song: Song) {
         playbackState.update { state ->
             val currentIndex = state.queue.indexOfFirst { it.id == state.currentSong?.id }
@@ -179,25 +185,26 @@ class PlayMusicUseCase @Inject constructor(
         }
     }
 
+    fun setPlaybackError(message: String?) {
+        playbackState.update { state ->
+            state.copy(errorMessage = message, isPlaying = if (message == null) state.isPlaying else false)
+        }
+    }
+
     private fun recommendedNext(state: PlaybackState): Song? {
         val current = state.currentSong ?: return state.queue.firstOrNull()
         val candidates = state.queue.filter { it.id != current.id }
         if (candidates.isEmpty()) return null
 
-        // Get top-listened song IDs from play history (last 30 days)
-        val topListenedIds = runBlocking {
-            playRecordDao.topSongsSince(System.currentTimeMillis() - 30 * 24 * 3600_000L, limit = 500)
-                .map { it.songId }.toSet()
-        }
-
         // Score each candidate
         data class Scored(val song: Song, val score: Int)
+        val listenedIds = topListenedSongIds
         val scored = candidates.map { song ->
             var score = 0
             if (song.artistId == current.artistId) score += 3
             if (song.albumId == current.albumId) score += 2
             if (song.isFavorite) score += 2
-            if (song.id in topListenedIds) score += 2
+            if (song.id in listenedIds) score += 2
             if (!song.artworkUri.isNullOrBlank()) score += 1
             Scored(song, score)
         }
@@ -213,5 +220,20 @@ class PlayMusicUseCase @Inject constructor(
     private fun Song.hasSamePlaybackSourceAs(other: Song): Boolean {
         if (source != other.source) return false
         return webDavServerId == other.webDavServerId
+    }
+
+    private suspend fun refreshTopListenedSongIds() {
+        val sinceMs = System.currentTimeMillis() - TOP_LISTENED_WINDOW_MS
+        topListenedSongIds = runCatching {
+            playRecordDao.topSongsSince(sinceMs, limit = TOP_LISTENED_LIMIT)
+                .map { it.songId }
+                .toSet()
+        }.getOrDefault(topListenedSongIds)
+    }
+
+    private companion object {
+        private const val TOP_LISTENED_LIMIT = 500
+        private const val TOP_LISTENED_REFRESH_MS = 5 * 60 * 1000L
+        private const val TOP_LISTENED_WINDOW_MS = 30 * 24 * 3600_000L
     }
 }

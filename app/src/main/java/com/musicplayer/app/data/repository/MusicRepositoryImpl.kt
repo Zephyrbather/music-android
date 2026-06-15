@@ -59,7 +59,7 @@ class MusicRepositoryImpl @Inject constructor(
         return songDao.observeSong(songId).map { it?.toDomain() }
     }
 
-    override suspend fun upsertSongs(songs: List<Song>) {
+    override suspend fun upsertSongs(songs: List<Song>, rebuildLibraryArtwork: Boolean) {
         if (songs.isEmpty()) return
         val existingById = songs
             .mapNotNull { song -> songDao.getSong(song.id)?.toDomain() }
@@ -72,7 +72,9 @@ class MusicRepositoryImpl @Inject constructor(
             }
         }
         songDao.upsertAll(mergedSongs.map { it.toEntity() })
-        rebuildLibraryArtwork(fetchArtistArtwork = false)
+        if (rebuildLibraryArtwork) {
+            rebuildLibraryArtwork(fetchArtistArtwork = false)
+        }
     }
 
     override suspend fun setFavorite(songId: String, favorite: Boolean) {

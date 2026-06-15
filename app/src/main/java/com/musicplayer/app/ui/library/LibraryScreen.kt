@@ -48,6 +48,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -162,10 +163,11 @@ fun LibraryScreen(
                         )
                     }
                     if (dp.total > 0) {
+                        val failedText = if (dp.failed > 0) " · ${strings.downloadFailed}: ${dp.failed}" else ""
                         Text(
-                            text = "${strings.download}: ${dp.completed}/${dp.total}",
+                            text = "${strings.download}: ${dp.completed}/${dp.total}$failedText",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = if (dp.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                             maxLines = 1
                         )
                     }
@@ -568,13 +570,18 @@ private fun SongActionSheet(
             Divider()
             val dp = downloadProgress
             val progressText = if (dp.total > 1) " (${dp.completed}/${dp.total})" else ""
+            val failed = song.id in dp.failedIds
             ListItem(
-                headlineContent = { Text(strings.download + progressText) },
+                headlineContent = { Text(if (failed) strings.downloadFailed else strings.download + progressText) },
                 leadingContent = {
                     if (isDownloading) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Outlined.Download, contentDescription = null)
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = null,
+                            tint = if (failed) MaterialTheme.colorScheme.error else LocalContentColor.current
+                        )
                     }
                 },
                 modifier = Modifier.clickable(enabled = !isDownloading) { onDownload() }
