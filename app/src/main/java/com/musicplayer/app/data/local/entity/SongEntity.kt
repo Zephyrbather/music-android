@@ -39,6 +39,7 @@ data class SongEntity(
     val releaseYear: Int?,
     val releaseMonth: Int?,
     val categoryTag: String?,
+    val semanticTags: String?,
     val dateAddedEpochMs: Long,
     val isFavorite: Boolean
 )
@@ -66,6 +67,7 @@ fun SongEntity.toDomain(): Song = Song(
     releaseYear = releaseYear,
     releaseMonth = releaseMonth,
     categoryTag = categoryTag,
+    semanticTags = semanticTags.toSemanticTags(),
     dateAddedEpochMs = dateAddedEpochMs,
     isFavorite = isFavorite
 )
@@ -93,6 +95,24 @@ fun Song.toEntity(): SongEntity = SongEntity(
     releaseYear = releaseYear,
     releaseMonth = releaseMonth,
     categoryTag = categoryTag,
+    semanticTags = semanticTags.toSemanticTagsStorage(),
     dateAddedEpochMs = dateAddedEpochMs,
     isFavorite = isFavorite
 )
+
+private fun String?.toSemanticTags(): List<String> {
+    return orEmpty()
+        .split('|')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+}
+
+private fun List<String>.toSemanticTagsStorage(): String? {
+    return map { it.trim() }
+        .filter { it.isNotBlank() && '|' !in it }
+        .distinct()
+        .take(12)
+        .joinToString("|")
+        .takeIf { it.isNotBlank() }
+}

@@ -44,6 +44,9 @@ interface SettingsRepository {
     val autoScrapeEnabled: Flow<Boolean>
     val backgroundAiScrapeEnabled: Flow<Boolean>
     val aiCategoryScrapeEnabled: Flow<Boolean>
+    val aiFeaturesEnabled: Flow<Boolean>
+    val aiPlaylistEnabled: Flow<Boolean>
+    val aiSemanticTagsEnabled: Flow<Boolean>
     val playbackMode: Flow<PlaybackMode>
     val desktopLyricsEnabled: Flow<Boolean>
     val aiProvider: Flow<AiProvider>
@@ -61,6 +64,9 @@ interface SettingsRepository {
     suspend fun setAutoScrapeEnabled(enabled: Boolean)
     suspend fun setBackgroundAiScrapeEnabled(enabled: Boolean)
     suspend fun setAiCategoryScrapeEnabled(enabled: Boolean)
+    suspend fun setAiFeaturesEnabled(enabled: Boolean)
+    suspend fun setAiPlaylistEnabled(enabled: Boolean)
+    suspend fun setAiSemanticTagsEnabled(enabled: Boolean)
     suspend fun setPlaybackMode(mode: PlaybackMode)
     suspend fun setDesktopLyricsEnabled(enabled: Boolean)
     suspend fun setAiProvider(provider: AiProvider)

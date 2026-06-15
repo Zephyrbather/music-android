@@ -63,7 +63,8 @@ fun SongListItem(
         song.artistName,
         song.albumTitle,
         song.durationMs,
-        song.categoryTag
+        song.categoryTag,
+        song.semanticTags
     ) {
         song.libraryDetailLabel()
     }
@@ -182,6 +183,7 @@ fun Song.libraryDetailLabel(): String {
         .joinToString(" - ")
     return listOfNotNull(
         categoryTag?.takeIf { it.isNotBlank() },
+        semanticTags.takeIf { it.isNotEmpty() }?.take(3)?.joinToString(" ") { "#$it" },
         qualityLabel,
         artistAlbum.takeIf { it.isNotBlank() },
         durationLabel()

@@ -183,7 +183,8 @@ class WebDavViewModel @Inject constructor(
 
     private suspend fun startAutoScrapeForMissing(songs: List<Song>) {
         if (!settingsRepository.autoScrapeEnabled.first()) return
-        val categoryScrapeEnabled = settingsRepository.aiCategoryScrapeEnabled.first()
+        val categoryScrapeEnabled = settingsRepository.aiFeaturesEnabled.first() &&
+            settingsRepository.aiCategoryScrapeEnabled.first()
         if (songs.any {
                 it.artworkUri.isNullOrBlank() ||
                     it.lyrics.isNullOrBlank() ||

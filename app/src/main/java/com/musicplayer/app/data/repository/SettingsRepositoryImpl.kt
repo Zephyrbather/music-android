@@ -83,6 +83,18 @@ class SettingsRepositoryImpl @Inject constructor(
         preferences[AI_CATEGORY_SCRAPE] ?: false
     }
 
+    override val aiFeaturesEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[AI_FEATURES_ENABLED] ?: false
+    }
+
+    override val aiPlaylistEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[AI_PLAYLIST_ENABLED] ?: false
+    }
+
+    override val aiSemanticTagsEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[AI_SEMANTIC_TAGS_ENABLED] ?: false
+    }
+
     override val playbackMode: Flow<PlaybackMode> = context.settingsDataStore.data.map { preferences ->
         preferences[PLAYBACK_MODE]?.let { runCatching { PlaybackMode.valueOf(it) }.getOrNull() }
             ?: PlaybackMode.SEQUENTIAL
@@ -159,6 +171,26 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setAiCategoryScrapeEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[AI_CATEGORY_SCRAPE] = enabled }
+    }
+
+    override suspend fun setAiFeaturesEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[AI_FEATURES_ENABLED] = enabled
+            if (!enabled) {
+                preferences[BACKGROUND_AI_SCRAPE] = false
+                preferences[AI_CATEGORY_SCRAPE] = false
+                preferences[AI_PLAYLIST_ENABLED] = false
+                preferences[AI_SEMANTIC_TAGS_ENABLED] = false
+            }
+        }
+    }
+
+    override suspend fun setAiPlaylistEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[AI_PLAYLIST_ENABLED] = enabled }
+    }
+
+    override suspend fun setAiSemanticTagsEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[AI_SEMANTIC_TAGS_ENABLED] = enabled }
     }
 
     override suspend fun setPlaybackMode(mode: PlaybackMode) {
@@ -264,6 +296,9 @@ class SettingsRepositoryImpl @Inject constructor(
             put("auto_scrape", prefs[AUTO_SCRAPE] ?: true)
             put("background_ai_scrape", prefs[BACKGROUND_AI_SCRAPE] ?: false)
             put("ai_category_scrape", prefs[AI_CATEGORY_SCRAPE] ?: false)
+            put("ai_features_enabled", prefs[AI_FEATURES_ENABLED] ?: false)
+            put("ai_playlist_enabled", prefs[AI_PLAYLIST_ENABLED] ?: false)
+            put("ai_semantic_tags_enabled", prefs[AI_SEMANTIC_TAGS_ENABLED] ?: false)
             put("playback_mode", prefs[PLAYBACK_MODE] ?: PlaybackMode.SEQUENTIAL.name)
             put("desktop_lyrics_enabled", prefs[DESKTOP_LYRICS_ENABLED] ?: false)
             put("ai_provider", prefs[AI_PROVIDER] ?: AiProvider.DEEPSEEK.name)
@@ -301,7 +336,22 @@ class SettingsRepositoryImpl @Inject constructor(
                 prefs[BACKGROUND_AI_SCRAPE] = j.getBoolean("background_ai_scrape") && prefs[AI_API_KEY] != null
             }
             if (j.has("ai_category_scrape")) {
-                prefs[AI_CATEGORY_SCRAPE] = j.getBoolean("ai_category_scrape") && prefs[AI_API_KEY] != null
+                prefs[AI_CATEGORY_SCRAPE] = j.getBoolean("ai_category_scrape") &&
+                    j.optBoolean("ai_features_enabled", false) &&
+                    prefs[AI_API_KEY] != null
+            }
+            if (j.has("ai_features_enabled")) {
+                prefs[AI_FEATURES_ENABLED] = j.getBoolean("ai_features_enabled") && prefs[AI_API_KEY] != null
+            }
+            if (j.has("ai_playlist_enabled")) {
+                prefs[AI_PLAYLIST_ENABLED] = j.getBoolean("ai_playlist_enabled") &&
+                    j.optBoolean("ai_features_enabled", false) &&
+                    prefs[AI_API_KEY] != null
+            }
+            if (j.has("ai_semantic_tags_enabled")) {
+                prefs[AI_SEMANTIC_TAGS_ENABLED] = j.getBoolean("ai_semantic_tags_enabled") &&
+                    j.optBoolean("ai_features_enabled", false) &&
+                    prefs[AI_API_KEY] != null
             }
             j.optString("playback_mode").takeIf { it.isNotBlank() }?.let { prefs[PLAYBACK_MODE] = it }
             if (j.has("desktop_lyrics_enabled")) {
@@ -404,6 +454,9 @@ class SettingsRepositoryImpl @Inject constructor(
         val AUTO_SCRAPE = booleanPreferencesKey("auto_scrape")
         val BACKGROUND_AI_SCRAPE = booleanPreferencesKey("background_ai_scrape")
         val AI_CATEGORY_SCRAPE = booleanPreferencesKey("ai_category_scrape")
+        val AI_FEATURES_ENABLED = booleanPreferencesKey("ai_features_enabled")
+        val AI_PLAYLIST_ENABLED = booleanPreferencesKey("ai_playlist_enabled")
+        val AI_SEMANTIC_TAGS_ENABLED = booleanPreferencesKey("ai_semantic_tags_enabled")
         val PLAYBACK_MODE = stringPreferencesKey("playback_mode")
         val DESKTOP_LYRICS_ENABLED = booleanPreferencesKey("desktop_lyrics_enabled")
         val AI_PROVIDER = stringPreferencesKey("ai_provider")

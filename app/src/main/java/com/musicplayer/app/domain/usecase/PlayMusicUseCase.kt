@@ -196,20 +196,9 @@ class PlayMusicUseCase @Inject constructor(
         val candidates = state.queue.filter { it.id != current.id }
         if (candidates.isEmpty()) return null
 
-        // Score each candidate
-        data class Scored(val song: Song, val score: Int)
         val listenedIds = topListenedSongIds
-        val scored = candidates.map { song ->
-            var score = 0
-            if (song.artistId == current.artistId) score += 3
-            if (song.albumId == current.albumId) score += 2
-            if (song.isFavorite) score += 2
-            if (song.id in listenedIds) score += 2
-            if (!song.artworkUri.isNullOrBlank()) score += 1
-            Scored(song, score)
-        }
+        val scored = candidates.map { song -> Scored(song, recommendationScore(current, song, listenedIds)) }
 
-        // Pick randomly from the highest-scoring tier
         val maxScore = scored.maxOfOrNull { it.score } ?: 0
         val topTier = scored.filter { it.score == maxScore }
         return topTier.randomOrNull()?.song
@@ -217,9 +206,44 @@ class PlayMusicUseCase @Inject constructor(
             ?: state.queue.firstOrNull()
     }
 
+    private fun recommendationScore(current: Song, candidate: Song, listenedIds: Set<String>): Int {
+        val currentTags = current.semanticTags.normalizedTagSet()
+        val candidateTags = candidate.semanticTags.normalizedTagSet()
+        val sharedTags = currentTags intersect candidateTags
+        val tagUnionSize = (currentTags + candidateTags).size.coerceAtLeast(1)
+
+        var score = 0
+        if (sharedTags.isNotEmpty()) {
+            score += sharedTags.size * 8
+            score += sharedTags.size * 4 / tagUnionSize
+        }
+        if (current.categoryTag.normalizedCategory() == candidate.categoryTag.normalizedCategory()) score += 5
+        if (candidate.hasSamePlaybackSourceAs(current)) score += 2
+        if (candidate.artistId != null && candidate.artistId == current.artistId) score += 3
+        if (candidate.albumId != null && candidate.albumId == current.albumId) score += 2
+        if (candidate.isFavorite) score += 2
+        if (candidate.id in listenedIds) score += 2
+        if (!candidate.artworkUri.isNullOrBlank()) score += 1
+        val yearDistance = candidate.releaseYear?.let { candidateYear ->
+            current.releaseYear?.let { currentYear -> kotlin.math.abs(candidateYear - currentYear) }
+        }
+        if (yearDistance != null && yearDistance <= 3) score += 1
+        return score
+    }
+
     private fun Song.hasSamePlaybackSourceAs(other: Song): Boolean {
         if (source != other.source) return false
         return webDavServerId == other.webDavServerId
+    }
+
+    private fun List<String>.normalizedTagSet(): Set<String> {
+        return map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    private fun String?.normalizedCategory(): String? {
+        return this?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun refreshTopListenedSongIds() {
@@ -236,4 +260,6 @@ class PlayMusicUseCase @Inject constructor(
         private const val TOP_LISTENED_REFRESH_MS = 5 * 60 * 1000L
         private const val TOP_LISTENED_WINDOW_MS = 30 * 24 * 3600_000L
     }
+
+    private data class Scored(val song: Song, val score: Int)
 }

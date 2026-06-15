@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Merge
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,9 +67,11 @@ fun PlaylistsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val rankingPeriod by viewModel.rankingPeriod.collectAsStateWithLifecycle()
     val rankedSongs by viewModel.rankedSongs.collectAsStateWithLifecycle()
+    val aiPlaylistState by viewModel.aiPlaylistState.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
 
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+    var showAiDialog by rememberSaveable { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Playlist?>(null) }
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
     var mergeTarget by remember { mutableStateOf<Playlist?>(null) }
@@ -91,6 +95,14 @@ fun PlaylistsScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f)
             )
+            Button(
+                onClick = { showAiDialog = true },
+                enabled = state.aiPlaylistAvailable
+            ) {
+                Icon(imageVector = Icons.Outlined.AutoAwesome, contentDescription = null)
+                Text(text = strings.aiCreatePlaylist)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
             Button(onClick = { showCreateDialog = true }) {
                 Icon(imageVector = Icons.Outlined.Add, contentDescription = null)
                 Text(text = strings.newPlaylist)
@@ -248,6 +260,54 @@ fun PlaylistsScreen(
             onDismiss = { showCreateDialog = false }
         )
     }
+    if (showAiDialog) {
+        AiPlaylistDialog(
+            generating = aiPlaylistState == AiPlaylistUiState.Generating,
+            onGenerate = { prompt -> viewModel.generateAiPlaylist(prompt) },
+            onDismiss = {
+                showAiDialog = false
+                viewModel.clearAiPlaylistState()
+            }
+        )
+    }
+    when (val result = aiPlaylistState) {
+        is AiPlaylistUiState.Created -> {
+            LaunchedEffect(result.playlistId) {
+                showAiDialog = false
+                viewModel.clearAiPlaylistState()
+                onOpenPlaylist(result.playlistId)
+            }
+        }
+        AiPlaylistUiState.ApiKeyRequired,
+        AiPlaylistUiState.Disabled,
+        AiPlaylistUiState.EmptyLibrary,
+        AiPlaylistUiState.Failed,
+        AiPlaylistUiState.NoSelection -> {
+            AlertDialog(
+                onDismissRequest = viewModel::clearAiPlaylistState,
+                title = { Text(strings.aiCreatePlaylist) },
+                text = {
+                    Text(
+                        when (result) {
+                            AiPlaylistUiState.ApiKeyRequired,
+                            AiPlaylistUiState.Disabled -> strings.aiPlaylistUnavailable
+                            AiPlaylistUiState.EmptyLibrary -> strings.noResultsFound
+                            AiPlaylistUiState.NoSelection -> strings.aiPlaylistNoSelection
+                            AiPlaylistUiState.Failed -> strings.aiPlaylistFailed
+                            else -> strings.aiPlaylistFailed
+                        }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = viewModel::clearAiPlaylistState) {
+                        Text(strings.confirm)
+                    }
+                }
+            )
+        }
+        AiPlaylistUiState.Generating,
+        AiPlaylistUiState.Idle -> Unit
+    }
     renameTarget?.let { playlist ->
         RenamePlaylistDialog(
             currentName = playlist.name,
@@ -284,6 +344,52 @@ fun PlaylistsScreen(
             onDismiss = { mergeTarget = null }
         )
     }
+}
+
+@Composable
+private fun AiPlaylistDialog(
+    generating: Boolean,
+    onGenerate: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalStrings.current
+    var prompt by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { if (!generating) onDismiss() },
+        title = { Text(strings.aiCreatePlaylist) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text(strings.aiPlaylistPrompt) },
+                    enabled = !generating,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (generating) {
+                    Text(
+                        text = strings.aiPlaylistGenerating,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onGenerate(prompt) },
+                enabled = prompt.isNotBlank() && !generating
+            ) {
+                Text(strings.aiCreatePlaylist)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !generating) {
+                Text(strings.cancel)
+            }
+        }
+    )
 }
 
 @Composable

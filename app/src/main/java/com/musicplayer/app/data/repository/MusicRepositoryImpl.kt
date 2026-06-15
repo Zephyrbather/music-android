@@ -219,6 +219,16 @@ class MusicRepositoryImpl @Inject constructor(
         return songDao.getSong(songId)?.toDomain()
     }
 
+    override suspend fun updateSongSemanticTags(songId: String, tags: List<String>): Song? {
+        val normalized = tags
+            .map { it.trim() }
+            .filter { it.isNotBlank() && '|' !in it }
+            .distinct()
+            .take(12)
+        songDao.updateSemanticTags(songId, normalized.joinToString("|").takeIf { it.isNotBlank() })
+        return songDao.getSong(songId)?.toDomain()
+    }
+
     override suspend fun rebuildLibraryArtwork(fetchArtistArtwork: Boolean) {
         val allSongs = songDao.getSongs().map { it.toDomain() }
         albumDao.clearAll()

@@ -440,6 +440,10 @@ class PlayerViewModel @Inject constructor(
         val requestVersion = scrapeRequestVersion + 1
         scrapeRequestVersion = requestVersion
         viewModelScope.launch {
+            if (!settingsRepository.aiFeaturesEnabled.first()) {
+                controls.update { it.copy(aiScrapeStatus = AiScrapeStatus.API_KEY_REQUIRED) }
+                return@launch
+            }
             val apiKey = settingsRepository.aiApiKey.first()
             val model = settingsRepository.aiModel.first()
             if (apiKey.isBlank()) {
@@ -483,6 +487,10 @@ class PlayerViewModel @Inject constructor(
         val song = scrapeBaseSong ?: playbackState.value.currentSong ?: return
         scrapeBaseSong = song
         viewModelScope.launch {
+            if (!settingsRepository.aiFeaturesEnabled.first()) {
+                controls.update { it.copy(categoryStatus = AiCategoryStatus.API_KEY_REQUIRED) }
+                return@launch
+            }
             val apiKey = settingsRepository.aiApiKey.first()
             val model = settingsRepository.aiModel.first()
             if (apiKey.isBlank()) {

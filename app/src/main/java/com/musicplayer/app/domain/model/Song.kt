@@ -23,6 +23,7 @@ data class Song(
     val releaseYear: Int? = null,
     val releaseMonth: Int? = null,
     val categoryTag: String? = null,
+    val semanticTags: List<String> = emptyList(),
     val dateAddedEpochMs: Long = System.currentTimeMillis(),
     val isFavorite: Boolean = false
 ) {

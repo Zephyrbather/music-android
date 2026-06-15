@@ -333,6 +333,8 @@ fun ScrapingSettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val workState by viewModel.workState.collectAsStateWithLifecycle()
     val hasResumableScrape by viewModel.hasResumableScrape.collectAsStateWithLifecycle()
+    val semanticTagResult by viewModel.aiSemanticTagResult.collectAsStateWithLifecycle()
+    val generatingSemanticTags by viewModel.generatingSemanticTags.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
 
     SettingsPage(
@@ -401,6 +403,54 @@ fun ScrapingSettingsScreen(
         }
         item {
             SettingSwitchRow(
+                title = strings.aiFeatures,
+                description = strings.aiFeaturesDesc,
+                checked = state.aiFeaturesEnabled,
+                onCheckedChange = viewModel::setAiFeaturesEnabled,
+                enabled = state.aiApiKey.isNotBlank() || state.aiFeaturesEnabled
+            )
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.aiPlaylist,
+                description = strings.aiPlaylistDesc,
+                checked = state.aiPlaylistEnabled,
+                onCheckedChange = viewModel::setAiPlaylistEnabled,
+                enabled = (state.aiFeaturesEnabled && state.aiApiKey.isNotBlank()) || state.aiPlaylistEnabled
+            )
+        }
+        item {
+            SettingSwitchRow(
+                title = strings.aiSemanticTags,
+                description = strings.aiSemanticTagsDesc,
+                checked = state.aiSemanticTagsEnabled,
+                onCheckedChange = viewModel::setAiSemanticTagsEnabled,
+                enabled = (state.aiFeaturesEnabled && state.aiApiKey.isNotBlank()) || state.aiSemanticTagsEnabled
+            )
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = viewModel::generateMissingSemanticTags,
+                    enabled = state.aiFeaturesEnabled &&
+                        state.aiSemanticTagsEnabled &&
+                        state.aiApiKey.isNotBlank() &&
+                        !generatingSemanticTags,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (generatingSemanticTags) strings.semanticTagsGenerating else strings.generateSemanticTags)
+                }
+                semanticTagResult?.let { result ->
+                    Text(
+                        text = strings.semanticTagsResult.format(result.updated, result.failed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        item {
+            SettingSwitchRow(
                 title = strings.autoScrape,
                 description = strings.autoScrapeDesc,
                 checked = state.autoScrape,
@@ -413,7 +463,7 @@ fun ScrapingSettingsScreen(
                 description = strings.backgroundAiScrapeDesc,
                 checked = state.backgroundAiScrape,
                 onCheckedChange = viewModel::setBackgroundAiScrape,
-                enabled = state.aiApiKey.isNotBlank() || state.backgroundAiScrape
+                enabled = (state.aiFeaturesEnabled && state.aiApiKey.isNotBlank()) || state.backgroundAiScrape
             )
         }
         item {
@@ -422,7 +472,7 @@ fun ScrapingSettingsScreen(
                 description = strings.aiCategoryScrapeDesc,
                 checked = state.aiCategoryScrape,
                 onCheckedChange = viewModel::setAiCategoryScrape,
-                enabled = state.aiApiKey.isNotBlank() || state.aiCategoryScrape
+                enabled = (state.aiFeaturesEnabled && state.aiApiKey.isNotBlank()) || state.aiCategoryScrape
             )
         }
         item {

@@ -114,8 +114,9 @@ class LibraryWorkCoordinator @Inject constructor(
     private suspend fun runScrape(freshStart: Boolean) {
         cpuPerformanceManager.setBackgroundPriority()
         val allSongs = musicRepository.observeSongs().first()
-        val requestedAiMetadataScrape = settingsRepository.backgroundAiScrapeEnabled.first()
-        val requestedAiCategoryScrape = settingsRepository.aiCategoryScrapeEnabled.first()
+        val aiFeaturesEnabled = settingsRepository.aiFeaturesEnabled.first()
+        val requestedAiMetadataScrape = aiFeaturesEnabled && settingsRepository.backgroundAiScrapeEnabled.first()
+        val requestedAiCategoryScrape = aiFeaturesEnabled && settingsRepository.aiCategoryScrapeEnabled.first()
         val requiresAi = requestedAiMetadataScrape || requestedAiCategoryScrape
         val apiKey = if (requiresAi) settingsRepository.aiApiKey.first() else ""
         val model = if (requiresAi) settingsRepository.aiModel.first() else ""

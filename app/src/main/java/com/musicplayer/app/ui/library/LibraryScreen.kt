@@ -1189,7 +1189,7 @@ private fun SearchDialog(
 ) {
     val filteredSongs = remember(query, songs) {
         if (query.isBlank()) emptyList()
-        else songs.filter { it.title.contains(query, ignoreCase = true) || it.artistName.contains(query, ignoreCase = true) }.take(10)
+        else songs.filter { it.matchesLibrarySearch(query) }.take(10)
     }
     val filteredAlbums = remember(query, albums) {
         if (query.isBlank()) emptyList()
@@ -1230,7 +1230,13 @@ private fun SearchDialog(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(song.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(song.artistName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        song.searchSubtitle(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
@@ -1271,4 +1277,26 @@ private fun SearchDialog(
             }
         }
     }
+}
+
+private fun Song.matchesLibrarySearch(query: String): Boolean {
+    val normalizedQuery = query.trim()
+    if (normalizedQuery.isBlank()) return false
+    return title.contains(normalizedQuery, ignoreCase = true) ||
+        artistName.contains(normalizedQuery, ignoreCase = true) ||
+        albumTitle.contains(normalizedQuery, ignoreCase = true) ||
+        categoryTag.orEmpty().contains(normalizedQuery, ignoreCase = true) ||
+        semanticTags.any { tag ->
+            tag.contains(normalizedQuery, ignoreCase = true) ||
+                tag.replace('-', ' ').contains(normalizedQuery, ignoreCase = true)
+        }
+}
+
+private fun Song.searchSubtitle(): String {
+    val details = buildList {
+        add(artistName)
+        categoryTag?.takeIf { it.isNotBlank() }?.let { add(it) }
+        semanticTags.takeIf { it.isNotEmpty() }?.take(3)?.joinToString(" ") { "#$it" }?.let { add(it) }
+    }
+    return details.joinToString(" · ")
 }

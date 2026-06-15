@@ -39,4 +39,5 @@ interface MusicRepository {
         artworkProvider: String?
     )
     suspend fun updateSongCategory(songId: String, categoryTag: String?): Song?
+    suspend fun updateSongSemanticTags(songId: String, tags: List<String>): Song?
 }

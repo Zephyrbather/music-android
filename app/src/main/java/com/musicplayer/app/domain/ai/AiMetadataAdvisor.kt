@@ -8,6 +8,12 @@ data class AiSongIdentity(
     val artistName: String
 )
 
+data class AiPlaylistSuggestion(
+    val name: String,
+    val description: String?,
+    val songIds: List<String>
+)
+
 interface AiMetadataAdvisor {
     suspend fun identifySong(
         song: Song,
@@ -28,4 +34,18 @@ interface AiMetadataAdvisor {
         model: String,
         categories: List<String>
     ): String?
+
+    suspend fun generatePlaylist(
+        prompt: String,
+        songs: List<Song>,
+        apiKey: String,
+        model: String,
+        maxSongs: Int = 30
+    ): AiPlaylistSuggestion?
+
+    suspend fun generateSemanticTags(
+        song: Song,
+        apiKey: String,
+        model: String
+    ): List<String>
 }

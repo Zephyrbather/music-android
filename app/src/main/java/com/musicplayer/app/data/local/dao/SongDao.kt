@@ -49,6 +49,9 @@ interface SongDao {
     @Query("UPDATE songs SET categoryTag = :categoryTag WHERE id = :songId")
     suspend fun updateCategory(songId: String, categoryTag: String?)
 
+    @Query("UPDATE songs SET semanticTags = :semanticTags WHERE id = :songId")
+    suspend fun updateSemanticTags(songId: String, semanticTags: String?)
+
     @Query("DELETE FROM songs WHERE source = 'LOCAL' AND uri NOT IN (:uris)")
     suspend fun removeLocalSongsNotIn(uris: List<String>): Int
 

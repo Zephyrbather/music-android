@@ -121,6 +121,7 @@ private fun SongEntity.toJson(): JSONObject = JSONObject().apply {
     put("sampleRateHz", sampleRateHz ?: 0); put("releaseYear", releaseYear ?: 0)
     put("releaseMonth", releaseMonth ?: 0); put("dateAddedEpochMs", dateAddedEpochMs)
     put("categoryTag", categoryTag ?: "")
+    put("semanticTags", semanticTags ?: "")
     put("isFavorite", isFavorite)
 }
 
@@ -146,6 +147,7 @@ private fun songFromJson(j: JSONObject): SongEntity = SongEntity(
     releaseYear = j.optInt("releaseYear").takeIf { it > 0 },
     releaseMonth = j.optInt("releaseMonth").takeIf { it > 0 },
     categoryTag = j.optString("categoryTag").takeIf { it.isNotBlank() },
+    semanticTags = j.optString("semanticTags").takeIf { it.isNotBlank() },
     dateAddedEpochMs = j.getLong("dateAddedEpochMs"),
     isFavorite = j.getBoolean("isFavorite")
 )

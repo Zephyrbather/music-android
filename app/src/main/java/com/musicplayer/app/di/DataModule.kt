@@ -27,7 +27,7 @@ object DataModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "music-player.db")
-            .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+            .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -72,6 +72,12 @@ object DataModule {
     private val MIGRATION_9_10 = object : Migration(9, 10) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_songs_albumTitle_discNumber_trackNumber_title` ON `songs` (`albumTitle`, `discNumber`, `trackNumber`, `title`)")
+        }
+    }
+
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE songs ADD COLUMN semanticTags TEXT")
         }
     }
 }

@@ -9,6 +9,8 @@ import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.repository.PlaylistRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
+import com.musicplayer.app.domain.usecase.AiGeneratePlaylistResult
+import com.musicplayer.app.domain.usecase.AiGeneratePlaylistUseCase
 import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.Calendar
@@ -26,7 +28,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class PlaylistsUiState(
-    val playlists: List<Playlist> = emptyList()
+    val playlists: List<Playlist> = emptyList(),
+    val aiPlaylistAvailable: Boolean = false
 )
 
 data class RankedSong(
@@ -41,11 +44,21 @@ class PlaylistsViewModel @Inject constructor(
     private val playlistRepository: PlaylistRepository,
     private val settingsRepository: SettingsRepository,
     private val managePlaylistUseCase: ManagePlaylistUseCase,
+    private val aiGeneratePlaylistUseCase: AiGeneratePlaylistUseCase,
     private val playRecordDao: PlayRecordDao,
     private val songDao: SongDao
 ) : ViewModel() {
-    val uiState: StateFlow<PlaylistsUiState> = playlistRepository.observePlaylists()
-        .map { playlists -> PlaylistsUiState(playlists) }
+    val uiState: StateFlow<PlaylistsUiState> = kotlinx.coroutines.flow.combine(
+        playlistRepository.observePlaylists(),
+        settingsRepository.aiFeaturesEnabled,
+        settingsRepository.aiPlaylistEnabled,
+        settingsRepository.aiApiKey
+    ) { playlists, aiEnabled, aiPlaylistEnabled, apiKey ->
+        PlaylistsUiState(
+            playlists = playlists,
+            aiPlaylistAvailable = aiEnabled && aiPlaylistEnabled && apiKey.isNotBlank()
+        )
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlaylistsUiState())
 
     private val _rankingPeriod = MutableStateFlow(RankingPeriod.WEEKLY)
@@ -53,6 +66,9 @@ class PlaylistsViewModel @Inject constructor(
 
     private val _rankedSongs = MutableStateFlow<List<RankedSong>>(emptyList())
     val rankedSongs: StateFlow<List<RankedSong>> = _rankedSongs.asStateFlow()
+
+    private val _aiPlaylistState = MutableStateFlow<AiPlaylistUiState>(AiPlaylistUiState.Idle)
+    val aiPlaylistState: StateFlow<AiPlaylistUiState> = _aiPlaylistState.asStateFlow()
 
     fun observePlaylistSongs(playlistId: String): Flow<List<Song>> {
         return playlistRepository.observePlaylistSongs(playlistId)
@@ -101,6 +117,25 @@ class PlaylistsViewModel @Inject constructor(
         }
     }
 
+    fun generateAiPlaylist(prompt: String) {
+        if (prompt.isBlank() || _aiPlaylistState.value == AiPlaylistUiState.Generating) return
+        viewModelScope.launch {
+            _aiPlaylistState.value = AiPlaylistUiState.Generating
+            _aiPlaylistState.value = when (val result = aiGeneratePlaylistUseCase(prompt)) {
+                is AiGeneratePlaylistResult.Created -> AiPlaylistUiState.Created(result.playlist.id, result.songCount)
+                AiGeneratePlaylistResult.ApiKeyRequired -> AiPlaylistUiState.ApiKeyRequired
+                AiGeneratePlaylistResult.Disabled -> AiPlaylistUiState.Disabled
+                AiGeneratePlaylistResult.EmptyLibrary -> AiPlaylistUiState.EmptyLibrary
+                AiGeneratePlaylistResult.Failed -> AiPlaylistUiState.Failed
+                AiGeneratePlaylistResult.NoSelection -> AiPlaylistUiState.NoSelection
+            }
+        }
+    }
+
+    fun clearAiPlaylistState() {
+        _aiPlaylistState.value = AiPlaylistUiState.Idle
+    }
+
     fun selectRankingPeriod(period: RankingPeriod) {
         _rankingPeriod.value = period
         loadRankings(period)
@@ -138,4 +173,15 @@ class PlaylistsViewModel @Inject constructor(
     init {
         loadRankings()
     }
+}
+
+sealed interface AiPlaylistUiState {
+    data object Idle : AiPlaylistUiState
+    data object Generating : AiPlaylistUiState
+    data class Created(val playlistId: String, val songCount: Int) : AiPlaylistUiState
+    data object Disabled : AiPlaylistUiState
+    data object ApiKeyRequired : AiPlaylistUiState
+    data object EmptyLibrary : AiPlaylistUiState
+    data object NoSelection : AiPlaylistUiState
+    data object Failed : AiPlaylistUiState
 }

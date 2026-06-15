@@ -197,6 +197,16 @@ fun NowPlayingScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (s.semanticTags.isNotEmpty()) {
+                    Text(
+                        text = s.semanticTags.take(5).joinToString(" ") { "#$it" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             playbackState.errorMessage?.let { message ->
                 Text(

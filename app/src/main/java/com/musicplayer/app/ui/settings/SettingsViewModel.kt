@@ -8,6 +8,8 @@ import coil.imageLoader
 import android.net.Uri
 import com.musicplayer.app.data.cache.CacheManager
 import com.musicplayer.app.domain.usecase.ExportImportUseCase
+import com.musicplayer.app.domain.usecase.AiGenerateSemanticTagsUseCase
+import com.musicplayer.app.domain.usecase.AiSemanticTagResult
 import com.musicplayer.app.domain.usecase.LibraryWorkCoordinator
 import com.musicplayer.app.domain.usecase.LibraryWorkState
 import com.musicplayer.app.domain.repository.AppLanguage
@@ -41,6 +43,9 @@ data class SettingsUiState(
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
     val aiCategoryScrape: Boolean = false,
+    val aiFeaturesEnabled: Boolean = false,
+    val aiPlaylistEnabled: Boolean = false,
+    val aiSemanticTagsEnabled: Boolean = false,
     val aiProvider: AiProvider = AiProvider.DEEPSEEK,
     val aiApiKey: String = "",
     val aiModel: String = "deepseek-v4-flash",
@@ -54,6 +59,7 @@ class SettingsViewModel @Inject constructor(
     private val libraryWorkCoordinator: LibraryWorkCoordinator,
     private val cacheManager: CacheManager,
     private val exportImportUseCase: ExportImportUseCase,
+    private val aiGenerateSemanticTagsUseCase: AiGenerateSemanticTagsUseCase,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
     private val appearanceState = combine(
@@ -91,13 +97,27 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.autoScrapeEnabled,
             settingsRepository.backgroundAiScrapeEnabled,
             settingsRepository.aiCategoryScrapeEnabled,
+            settingsRepository.aiFeaturesEnabled,
+            settingsRepository.aiPlaylistEnabled,
+            settingsRepository.aiSemanticTagsEnabled,
             settingsRepository.aiProvider,
             settingsRepository.aiApiKey
-        ) { autoScrape, backgroundAiScrape, aiCategoryScrape, aiProvider, aiApiKey ->
+        ) { values ->
+            val autoScrape = values[0] as Boolean
+            val backgroundAiScrape = values[1] as Boolean
+            val aiCategoryScrape = values[2] as Boolean
+            val aiFeaturesEnabled = values[3] as Boolean
+            val aiPlaylistEnabled = values[4] as Boolean
+            val aiSemanticTagsEnabled = values[5] as Boolean
+            val aiProvider = values[6] as AiProvider
+            val aiApiKey = values[7] as String
             ScrapingSettings(
                 autoScrape = autoScrape,
                 backgroundAiScrape = backgroundAiScrape,
                 aiCategoryScrape = aiCategoryScrape,
+                aiFeaturesEnabled = aiFeaturesEnabled,
+                aiPlaylistEnabled = aiPlaylistEnabled,
+                aiSemanticTagsEnabled = aiSemanticTagsEnabled,
                 aiProvider = aiProvider,
                 aiApiKey = aiApiKey
             )
@@ -123,6 +143,9 @@ class SettingsViewModel @Inject constructor(
             autoScrape = scraping.autoScrape,
             backgroundAiScrape = scraping.backgroundAiScrape,
             aiCategoryScrape = scraping.aiCategoryScrape,
+            aiFeaturesEnabled = scraping.aiFeaturesEnabled,
+            aiPlaylistEnabled = scraping.aiPlaylistEnabled,
+            aiSemanticTagsEnabled = scraping.aiSemanticTagsEnabled,
             aiProvider = scraping.aiProvider,
             aiApiKey = scraping.aiApiKey,
             aiModel = scraping.aiModel,
@@ -150,6 +173,12 @@ class SettingsViewModel @Inject constructor(
 
     private val _exportImportResult = MutableStateFlow<String?>(null)
     val exportImportResult: StateFlow<String?> = _exportImportResult.asStateFlow()
+
+    private val _aiSemanticTagResult = MutableStateFlow<AiSemanticTagResult?>(null)
+    val aiSemanticTagResult: StateFlow<AiSemanticTagResult?> = _aiSemanticTagResult.asStateFlow()
+
+    private val _generatingSemanticTags = MutableStateFlow(false)
+    val generatingSemanticTags: StateFlow<Boolean> = _generatingSemanticTags.asStateFlow()
 
     init {
         loadCacheSizes()
@@ -274,7 +303,7 @@ class SettingsViewModel @Inject constructor(
 
     fun setBackgroundAiScrape(enabled: Boolean) {
         viewModelScope.launch {
-            if (!enabled || settingsRepository.aiApiKey.first().isNotBlank()) {
+            if (!enabled || (settingsRepository.aiFeaturesEnabled.first() && settingsRepository.aiApiKey.first().isNotBlank())) {
                 settingsRepository.setBackgroundAiScrapeEnabled(enabled)
             }
         }
@@ -282,9 +311,44 @@ class SettingsViewModel @Inject constructor(
 
     fun setAiCategoryScrape(enabled: Boolean) {
         viewModelScope.launch {
-            if (!enabled || settingsRepository.aiApiKey.first().isNotBlank()) {
+            if (!enabled || (settingsRepository.aiFeaturesEnabled.first() && settingsRepository.aiApiKey.first().isNotBlank())) {
                 settingsRepository.setAiCategoryScrapeEnabled(enabled)
             }
+        }
+    }
+
+    fun setAiFeaturesEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled || settingsRepository.aiApiKey.first().isNotBlank()) {
+                settingsRepository.setAiFeaturesEnabled(enabled)
+            }
+        }
+    }
+
+    fun setAiPlaylistEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled || (settingsRepository.aiFeaturesEnabled.first() && settingsRepository.aiApiKey.first().isNotBlank())) {
+                settingsRepository.setAiPlaylistEnabled(enabled)
+            }
+        }
+    }
+
+    fun setAiSemanticTagsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (!enabled || (settingsRepository.aiFeaturesEnabled.first() && settingsRepository.aiApiKey.first().isNotBlank())) {
+                settingsRepository.setAiSemanticTagsEnabled(enabled)
+            }
+        }
+    }
+
+    fun generateMissingSemanticTags() {
+        viewModelScope.launch {
+            if (_generatingSemanticTags.value) return@launch
+            _generatingSemanticTags.value = true
+            _aiSemanticTagResult.value = withContext(Dispatchers.IO) {
+                aiGenerateSemanticTagsUseCase()
+            }
+            _generatingSemanticTags.value = false
         }
     }
 
@@ -294,8 +358,11 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setAiApiKey(apiKey)
             settingsRepository.setAiModel(model)
             if (apiKey.isBlank()) {
+                settingsRepository.setAiFeaturesEnabled(false)
                 settingsRepository.setBackgroundAiScrapeEnabled(false)
                 settingsRepository.setAiCategoryScrapeEnabled(false)
+                settingsRepository.setAiPlaylistEnabled(false)
+                settingsRepository.setAiSemanticTagsEnabled(false)
             }
         }
     }
@@ -363,6 +430,9 @@ private data class ScrapingSettings(
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
     val aiCategoryScrape: Boolean = false,
+    val aiFeaturesEnabled: Boolean = false,
+    val aiPlaylistEnabled: Boolean = false,
+    val aiSemanticTagsEnabled: Boolean = false,
     val aiProvider: AiProvider = AiProvider.DEEPSEEK,
     val aiApiKey: String = "",
     val aiModel: String = "deepseek-v4-flash"

@@ -92,7 +92,8 @@ class HomeViewModel @Inject constructor(
             }
             if (settingsRepository.autoScrapeEnabled.first()) {
                 val songs = musicRepository.observeSongs().first()
-                val categoryScrapeEnabled = settingsRepository.aiCategoryScrapeEnabled.first()
+                val categoryScrapeEnabled = settingsRepository.aiFeaturesEnabled.first() &&
+                    settingsRepository.aiCategoryScrapeEnabled.first()
                 val needsScrape = songs.any {
                     it.lyrics.isNullOrBlank() ||
                         it.artworkUri.isNullOrBlank() ||
@@ -255,6 +256,8 @@ private fun buildRecommendedSongs(songs: List<Song>): List<Song> {
     return songs
         .sortedWith(
             compareByDescending<Song> { it.isFavorite }
+                .thenByDescending { it.semanticTags.isNotEmpty() }
+                .thenByDescending { !it.categoryTag.isNullOrBlank() }
                 .thenByDescending { !it.artworkUri.isNullOrBlank() }
                 .thenByDescending { it.dateAddedEpochMs }
         )

@@ -1,6 +1,7 @@
 package com.musicplayer.app.data.ai
 
 import com.musicplayer.app.domain.ai.AiMetadataAdvisor
+import com.musicplayer.app.domain.ai.AiPlaylistSuggestion
 import com.musicplayer.app.domain.ai.AiSongIdentity
 import com.musicplayer.app.domain.model.SongCategoryTags
 import com.musicplayer.app.domain.model.Song
@@ -106,6 +107,87 @@ class DeepSeekMetadataAdvisor @Inject constructor(
         return SongCategoryTags.normalize(result.optString("category"))
     }
 
+    override suspend fun generatePlaylist(
+        prompt: String,
+        songs: List<Song>,
+        apiKey: String,
+        model: String,
+        maxSongs: Int
+    ): AiPlaylistSuggestion? {
+        val trimmedPrompt = prompt.trim()
+        if (trimmedPrompt.isBlank() || songs.isEmpty()) return null
+        val compactSongs = JSONArray().apply {
+            songs.take(MAX_PLAYLIST_INPUT_SONGS).forEach { song ->
+                put(
+                    JSONObject().apply {
+                        put("id", song.id)
+                        put("title", song.title)
+                        put("artist", song.artistName)
+                        put("album", song.albumTitle)
+                        put("category", song.categoryTag.orEmpty())
+                        put("favorite", song.isFavorite)
+                        put("year", song.releaseYear ?: JSONObject.NULL)
+                    }
+                )
+            }
+        }
+        val input = JSONObject().apply {
+            put("request", trimmedPrompt)
+            put("maxSongs", maxSongs.coerceIn(1, MAX_PLAYLIST_SIZE))
+            put("library", compactSongs)
+        }
+        val result = completeJson(
+            apiKey = apiKey,
+            model = model,
+            systemPrompt = "Create a music playlist from the provided local library summary. " +
+                "Only choose songs by id from the library. Return JSON only with name, description, and songIds array. " +
+                "Do not invent song ids. Match the user's requested mood, scene, language, artist, era, or style.",
+            userPrompt = input.toString()
+        ) ?: return null
+        val songIds = result.optJSONArray("songIds")
+            ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) } }
+            .orEmpty()
+            .distinct()
+            .take(maxSongs.coerceIn(1, MAX_PLAYLIST_SIZE))
+        if (songIds.isEmpty()) return null
+        val libraryIds = songs.map { it.id }.toSet()
+        val validIds = songIds.filter { it in libraryIds }
+        if (validIds.isEmpty()) return null
+        return AiPlaylistSuggestion(
+            name = result.optString("name").trim().takeIf { it.isNotBlank() } ?: "AI Mix",
+            description = result.optString("description").trim().takeIf { it.isNotBlank() },
+            songIds = validIds
+        )
+    }
+
+    override suspend fun generateSemanticTags(
+        song: Song,
+        apiKey: String,
+        model: String
+    ): List<String> {
+        val input = JSONObject().apply {
+            put("title", song.title)
+            put("artist", song.artistName)
+            put("album", song.albumTitle)
+            put("category", song.categoryTag.orEmpty())
+            put("year", song.releaseYear ?: JSONObject.NULL)
+            put("lyricsExcerpt", song.lyrics.orEmpty().take(MAX_LYRICS_EXCERPT_CHARS))
+        }
+        val result = completeJson(
+            apiKey = apiKey,
+            model = model,
+            systemPrompt = "Generate concise semantic music tags for local library organization. " +
+                "Return JSON only with tags array. Include mood, scene, language, style, and energy when inferable. " +
+                "Use short lowercase English tags, no more than 8 tags. Do not include artist/title names.",
+            userPrompt = input.toString()
+        ) ?: return emptyList()
+        return result.optJSONArray("tags")
+            ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).normalizeSemanticTag() } }
+            .orEmpty()
+            .distinct()
+            .take(MAX_SEMANTIC_TAGS)
+    }
+
     private suspend fun completeJson(
         apiKey: String,
         model: String,
@@ -153,6 +235,19 @@ class DeepSeekMetadataAdvisor @Inject constructor(
     private companion object {
         const val API_URL = "https://api.deepseek.com/chat/completions"
         const val DEFAULT_MODEL = "deepseek-v4-flash"
+        const val MAX_PLAYLIST_INPUT_SONGS = 200
+        const val MAX_PLAYLIST_SIZE = 50
+        const val MAX_LYRICS_EXCERPT_CHARS = 1200
+        const val MAX_SEMANTIC_TAGS = 8
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
+}
+
+private fun String.normalizeSemanticTag(): String? {
+    val normalized = trim()
+        .lowercase()
+        .replace(Regex("""\s+"""), "-")
+        .filter { it.isLetterOrDigit() || it == '-' }
+        .trim('-')
+    return normalized.takeIf { it.length in 2..32 }
 }
