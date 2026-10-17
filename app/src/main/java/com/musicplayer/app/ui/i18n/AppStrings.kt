@@ -394,7 +394,8 @@ data class ExtraStrings(
     val posterPaletteTheme: String,
     val posterPaletteGold: String,
     val posterPaletteOcean: String,
-    val posterPaletteSakura: String
+    val posterPaletteSakura: String,
+    val collapseNavRail: String
 )
 
 val LocalStrings = staticCompositionLocalOf { chineseStrings }
@@ -836,7 +837,8 @@ private val chineseExtraStrings = ExtraStrings(
     posterPaletteTheme = "主题色",
     posterPaletteGold = "暖金",
     posterPaletteOcean = "冷蓝",
-    posterPaletteSakura = "樱粉"
+    posterPaletteSakura = "樱粉",
+    collapseNavRail = "收起菜单"
 )
 
 private val englishStrings = AppStrings(
@@ -1226,5 +1228,6 @@ private val englishExtraStrings = ExtraStrings(
     posterPaletteTheme = "Theme",
     posterPaletteGold = "Gold",
     posterPaletteOcean = "Ocean",
-    posterPaletteSakura = "Sakura"
+    posterPaletteSakura = "Sakura",
+    collapseNavRail = "Collapse menu"
 )

@@ -1,6 +1,11 @@
 package com.musicplayer.app.ui.navigation
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -9,6 +14,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -20,15 +26,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -39,11 +48,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
@@ -52,6 +64,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -71,6 +84,7 @@ import com.musicplayer.app.domain.repository.ThemeStyle
 import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.adaptive.PadLayoutBreakpoint
 import com.musicplayer.app.ui.home.HomeScreen
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
 import com.musicplayer.app.ui.i18n.ProvideLocalizedStrings
 import com.musicplayer.app.ui.library.AlbumDetailScreen
@@ -99,6 +113,7 @@ import com.musicplayer.app.ui.stats.ListeningStatsScreen
 import com.musicplayer.app.ui.theme.MusicPlayerTheme
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -138,6 +153,8 @@ fun AppNavigation() {
     val settings by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
+    var navRailVisible by rememberSaveable { mutableStateOf(true) }
+    var navRailTouch by remember { mutableIntStateOf(0) }
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val currentArtworkUriFlow = remember(playerViewModel) {
         playerViewModel.playbackState
@@ -352,52 +369,84 @@ fun AppNavigation() {
                 }
 
                 if (isPadLayout) {
+                    LaunchedEffect(navRailVisible, navRailTouch) {
+                        if (navRailVisible) {
+                            delay(6_000L)
+                            navRailVisible = false
+                        }
+                    }
                     Scaffold(
                         containerColor = if (dynamicBackdrop) Color.Transparent else MaterialTheme.colorScheme.background,
                         contentColor = MaterialTheme.colorScheme.onBackground
                     ) { innerPadding ->
-                        Row(
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(innerPadding)
                         ) {
-                            PadNavigationRail(
-                                currentDestination = currentDestination,
-                                navController = navController,
-                                logoUri = settings.customLogoUri,
-                                onNavigate = { showNowPlaying = false }
-                            )
-                            Box(modifier = Modifier.weight(1f)) {
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    navHostContent(Modifier.weight(1f))
-                                    if (showPlayerChrome) {
-                                        MiniPlayerRoute(
-                                            playerViewModel = playerViewModel,
-                                            onOpenNowPlaying = { showNowPlaying = true },
-                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                            shape = RoundedCornerShape(18.dp)
-                                        )
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                AnimatedVisibility(
+                                    visible = navRailVisible,
+                                    enter = expandHorizontally() + fadeIn(),
+                                    exit = shrinkHorizontally() + fadeOut()
+                                ) {
+                                    PadNavigationRail(
+                                        currentDestination = currentDestination,
+                                        navController = navController,
+                                        logoUri = settings.customLogoUri,
+                                        onCollapse = { navRailVisible = false },
+                                        onNavigate = {
+                                            showNowPlaying = false
+                                            navRailTouch++
+                                        }
+                                    )
+                                }
+                                Box(modifier = Modifier.weight(1f)) {
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        navHostContent(Modifier.weight(1f))
+                                        if (showPlayerChrome) {
+                                            MiniPlayerRoute(
+                                                playerViewModel = playerViewModel,
+                                                onOpenNowPlaying = { showNowPlaying = true },
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                                shape = RoundedCornerShape(18.dp)
+                                            )
+                                        }
+                                    }
+                                    if (showNowPlaying) {
+                                        Surface(
+                                            modifier = Modifier.fillMaxSize(),
+                                            color = MaterialTheme.colorScheme.background
+                                        ) {
+                                            NowPlayingRoute(
+                                                playerViewModel = playerViewModel,
+                                                onClose = { showNowPlaying = false },
+                                                onOpenScrapeDetail = {
+                                                    showNowPlaying = false
+                                                    navController.navigate("scrape-detail")
+                                                },
+                                                onOpenEqualizer = {
+                                                    showNowPlaying = false
+                                                    navController.navigate(EQUALIZER_ROUTE)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
-                                if (showNowPlaying) {
-                                    Surface(
-                                        modifier = Modifier.fillMaxSize(),
-                                        color = MaterialTheme.colorScheme.background
-                                    ) {
-                                        NowPlayingRoute(
-                                            playerViewModel = playerViewModel,
-                                            onClose = { showNowPlaying = false },
-                                            onOpenScrapeDetail = {
-                                                showNowPlaying = false
-                                                navController.navigate("scrape-detail")
-                                            },
-                                            onOpenEqualizer = {
-                                                showNowPlaying = false
-                                                navController.navigate(EQUALIZER_ROUTE)
+                            }
+                            if (!navRailVisible) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterStart)
+                                        .fillMaxHeight()
+                                        .width(24.dp)
+                                        .pointerInput(Unit) {
+                                            detectTapGestures {
+                                                navRailTouch++
+                                                navRailVisible = true
                                             }
-                                        )
-                                    }
-                                }
+                                        }
+                                )
                             }
                         }
                     }
@@ -480,6 +529,7 @@ private fun PadNavigationRail(
     currentDestination: NavDestination?,
     navController: NavHostController,
     logoUri: String,
+    onCollapse: () -> Unit,
     onNavigate: () -> Unit
 ) {
     val strings = LocalStrings.current
@@ -547,6 +597,16 @@ private fun PadNavigationRail(
             )
         }
         Spacer(modifier = Modifier.weight(1f))
+        IconButton(
+            onClick = onCollapse,
+            modifier = Modifier.padding(bottom = 12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ChevronLeft,
+                contentDescription = LocalExtraStrings.current.collapseNavRail,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
