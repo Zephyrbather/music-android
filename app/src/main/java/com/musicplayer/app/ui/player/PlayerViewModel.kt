@@ -119,6 +119,13 @@ class PlayerViewModel @Inject constructor(
     private val _lyricOffsetMs = MutableStateFlow(0L)
     val lyricOffsetMs: StateFlow<Long> = _lyricOffsetMs.asStateFlow()
 
+    private val lyricFontPrefs =
+        context.getSharedPreferences("lyric_font", Context.MODE_PRIVATE)
+    private val _lyricFontScale = MutableStateFlow(
+        lyricFontPrefs.getFloat(KEY_LYRIC_FONT_SCALE, 1f).coerceIn(LYRIC_FONT_MIN, LYRIC_FONT_MAX)
+    )
+    val lyricFontScale: StateFlow<Float> = _lyricFontScale.asStateFlow()
+
     private var lastPlayStartMs: Long = 0L
     private var lastPlaySongId: String? = null
 
@@ -144,6 +151,19 @@ class PlayerViewModel @Inject constructor(
         val songId = playbackState.value.currentSong?.id ?: return
         _lyricOffsetMs.value = 0L
         lyricOffsetPrefs.edit().remove(songId).apply()
+    }
+
+    fun adjustLyricFontScale(delta: Float) {
+        val next = (_lyricFontScale.value + delta)
+            .coerceIn(LYRIC_FONT_MIN, LYRIC_FONT_MAX)
+            .let { (it * 100).toInt() / 100f }
+        _lyricFontScale.value = next
+        lyricFontPrefs.edit().putFloat(KEY_LYRIC_FONT_SCALE, next).apply()
+    }
+
+    fun resetLyricFontScale() {
+        _lyricFontScale.value = 1f
+        lyricFontPrefs.edit().remove(KEY_LYRIC_FONT_SCALE).apply()
     }
 
     private fun recordPlayEnd() {
@@ -822,3 +842,7 @@ private fun Song.withoutScrapeSourceMetadata(): Song {
         releaseMonth = null
     )
 }
+
+private const val KEY_LYRIC_FONT_SCALE = "font_scale"
+private const val LYRIC_FONT_MIN = 0.75f
+private const val LYRIC_FONT_MAX = 1.5f

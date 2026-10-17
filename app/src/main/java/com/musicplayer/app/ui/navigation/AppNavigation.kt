@@ -653,6 +653,7 @@ private fun NowPlayingRoute(
     val playbackState by playerViewModel.playbackState.collectAsStateWithLifecycle()
     val desktopLyricsEnabled by playerViewModel.desktopLyricsEnabled.collectAsStateWithLifecycle()
     val lyricOffsetMs by playerViewModel.lyricOffsetMs.collectAsStateWithLifecycle()
+    val lyricFontScale by playerViewModel.lyricFontScale.collectAsStateWithLifecycle()
     val comments by playerViewModel.comments.collectAsStateWithLifecycle()
     val showCommentDialog by playerViewModel.showCommentDialog.collectAsStateWithLifecycle()
     val candidates by playerViewModel.candidates.collectAsStateWithLifecycle()
@@ -671,6 +672,9 @@ private fun NowPlayingRoute(
         lyricOffsetMs = lyricOffsetMs,
         onAdjustLyricOffset = playerViewModel::adjustLyricOffset,
         onResetLyricOffset = playerViewModel::resetLyricOffset,
+        lyricFontScale = lyricFontScale,
+        onAdjustLyricFontScale = playerViewModel::adjustLyricFontScale,
+        onResetLyricFontScale = playerViewModel::resetLyricFontScale,
         onOpenEqualizer = onOpenEqualizer,
         onOpenScrapeDetail = onOpenScrapeDetail,
         showCommentDialog = showCommentDialog,

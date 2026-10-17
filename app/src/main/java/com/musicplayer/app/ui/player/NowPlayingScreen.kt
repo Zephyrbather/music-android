@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
@@ -54,11 +55,14 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.AvTimer
+import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -148,6 +152,9 @@ fun NowPlayingScreen(
     lyricOffsetMs: Long = 0L,
     onAdjustLyricOffset: (Long) -> Unit = {},
     onResetLyricOffset: () -> Unit = {},
+    lyricFontScale: Float = 1f,
+    onAdjustLyricFontScale: (Float) -> Unit = {},
+    onResetLyricFontScale: () -> Unit = {},
     onOpenEqualizer: () -> Unit = {},
     onOpenScrapeDetail: () -> Unit = {},
     showCommentDialog: Boolean = false,
@@ -205,6 +212,9 @@ fun NowPlayingScreen(
             lyricOffsetMs = lyricOffsetMs,
             onAdjustLyricOffset = onAdjustLyricOffset,
             onResetLyricOffset = onResetLyricOffset,
+            lyricFontScale = lyricFontScale,
+            onAdjustLyricFontScale = onAdjustLyricFontScale,
+            onResetLyricFontScale = onResetLyricFontScale,
             onPlaybackModeChange = onPlaybackModeChange,
             onOpenPoster = openPoster,
             onExit = { lyricsMode = false },
@@ -230,6 +240,9 @@ fun NowPlayingScreen(
             lyricOffsetMs = lyricOffsetMs,
             onAdjustLyricOffset = onAdjustLyricOffset,
             onResetLyricOffset = onResetLyricOffset,
+            lyricFontScale = lyricFontScale,
+            onAdjustLyricFontScale = onAdjustLyricFontScale,
+            onResetLyricFontScale = onResetLyricFontScale,
             onOpenPoster = openPoster,
             modifier = modifier
         )
@@ -406,6 +419,9 @@ private fun PadNowPlayingContent(
     lyricOffsetMs: Long,
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
+    lyricFontScale: Float,
+    onAdjustLyricFontScale: (Float) -> Unit,
+    onResetLyricFontScale: () -> Unit,
     onOpenPoster: (List<String>, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -510,25 +526,26 @@ private fun PadNowPlayingContent(
                 positionMs = playbackState.positionMs,
                 onSeekTo = onSeekTo,
                 lyricOffsetMs = lyricOffsetMs,
-                onAdjustLyricOffset = onAdjustLyricOffset,
-                onResetLyricOffset = onResetLyricOffset,
+                lyricFontScale = lyricFontScale,
                 onOpenPoster = onOpenPoster,
                 modifier = Modifier
                     .weight(0.9f)
                     .fillMaxHeight()
             )
         }
-        IconButton(
-            onClick = onClose,
+        LyricQuickActions(
+            offsetMs = lyricOffsetMs,
+            fontScale = lyricFontScale,
+            enabled = song != null,
+            onAdjustOffset = onAdjustLyricOffset,
+            onResetOffset = onResetLyricOffset,
+            onAdjustFontScale = onAdjustLyricFontScale,
+            onResetFontScale = onResetLyricFontScale,
+            onCollapse = onClose,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 8.dp, end = 10.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.ArrowDownward,
-                contentDescription = strings.close
-            )
-        }
+        )
     }
 }
 
@@ -539,8 +556,7 @@ private fun PadLyricsPanel(
     positionMs: Long,
     onSeekTo: (Long) -> Unit,
     lyricOffsetMs: Long,
-    onAdjustLyricOffset: (Long) -> Unit,
-    onResetLyricOffset: () -> Unit,
+    lyricFontScale: Float,
     onOpenPoster: (List<String>, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -563,19 +579,12 @@ private fun PadLyricsPanel(
         color = Color.Transparent
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            LyricOffsetControls(
-                offsetMs = lyricOffsetMs,
-                enabled = song != null,
-                onAdjust = onAdjustLyricOffset,
-                onReset = onResetLyricOffset,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
-            )
             when {
                 timedLines.isNotEmpty() -> {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
+                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         itemsIndexed(timedLines, key = { index, _ -> index }) { index, line ->
@@ -583,6 +592,7 @@ private fun PadLyricsPanel(
                             Text(
                                 text = line.text,
                                 style = MaterialTheme.typography.titleMedium,
+                                fontSize = MaterialTheme.typography.titleMedium.fontSize * lyricFontScale,
                                 color = if (isCurrent) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
@@ -604,12 +614,13 @@ private fun PadLyricsPanel(
                 !song?.lyrics.isNullOrBlank() -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp)
+                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 20.dp)
                     ) {
                         item {
                             Text(
                                 text = song?.lyrics.orEmpty(),
                                 style = MaterialTheme.typography.bodyLarge,
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * lyricFontScale,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.combinedClickable(
                                     onClick = {},
@@ -1341,6 +1352,9 @@ private fun LyricsMode(
     lyricOffsetMs: Long,
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
+    lyricFontScale: Float,
+    onAdjustLyricFontScale: (Float) -> Unit,
+    onResetLyricFontScale: () -> Unit,
     onPlaybackModeChange: (PlaybackMode) -> Unit,
     onOpenPoster: (List<String>, Int) -> Unit,
     onExit: () -> Unit,
@@ -1375,16 +1389,26 @@ private fun LyricsMode(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            ImmersiveLyricsHeader(
-                song = song,
-                modifier = Modifier.fillMaxWidth()
-            )
-            LyricOffsetControls(
-                offsetMs = lyricOffsetMs,
-                enabled = song != null,
-                onAdjust = onAdjustLyricOffset,
-                onReset = onResetLyricOffset
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ImmersiveLyricsHeader(
+                    song = song,
+                    modifier = Modifier.weight(1f)
+                )
+                LyricQuickActions(
+                    offsetMs = lyricOffsetMs,
+                    fontScale = lyricFontScale,
+                    enabled = song != null,
+                    onAdjustOffset = onAdjustLyricOffset,
+                    onResetOffset = onResetLyricOffset,
+                    onAdjustFontScale = onAdjustLyricFontScale,
+                    onResetFontScale = onResetLyricFontScale,
+                    onCollapse = onExit
+                )
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -1421,6 +1445,7 @@ private fun LyricsMode(
                             Text(
                                 text = line.text,
                                 style = MaterialTheme.typography.titleLarge,
+                                fontSize = MaterialTheme.typography.titleLarge.fontSize * lyricFontScale,
                                 textAlign = TextAlign.Center,
                                 color = if (isCurrent) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
@@ -1834,6 +1859,185 @@ private fun LyricOffsetControls(
                 contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
                 Text(text = extra.lyricOffsetReset, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+private const val LYRIC_FONT_STEP = 0.1f
+private const val LYRIC_FONT_MIN = 0.75f
+private const val LYRIC_FONT_MAX = 1.5f
+
+@Composable
+private fun LyricQuickActions(
+    offsetMs: Long,
+    fontScale: Float,
+    enabled: Boolean,
+    onAdjustOffset: (Long) -> Unit,
+    onResetOffset: () -> Unit,
+    onAdjustFontScale: (Float) -> Unit,
+    onResetFontScale: () -> Unit,
+    onCollapse: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
+    var showFontMenu by remember { mutableStateOf(false) }
+    var showOffsetMenu by remember { mutableStateOf(false) }
+    val fontActive = fontScale != 1f
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box {
+            QuickActionButton(
+                icon = Icons.Outlined.FormatSize,
+                contentDescription = extra.lyricFontSize,
+                active = fontActive,
+                enabled = enabled,
+                onClick = { showFontMenu = true }
+            )
+            DropdownMenu(
+                expanded = showFontMenu,
+                onDismissRequest = { showFontMenu = false }
+            ) {
+                QuickValueMenu(
+                    label = extra.lyricFontSize,
+                    value = "${(fontScale * 100).roundToInt()}%",
+                    active = fontActive,
+                    canDecrease = fontScale > LYRIC_FONT_MIN,
+                    canIncrease = fontScale < LYRIC_FONT_MAX,
+                    resetLabel = extra.lyricOffsetReset,
+                    onDecrease = { onAdjustFontScale(-LYRIC_FONT_STEP) },
+                    onIncrease = { onAdjustFontScale(LYRIC_FONT_STEP) },
+                    onReset = onResetFontScale
+                )
+            }
+        }
+        Box {
+            QuickActionButton(
+                icon = Icons.Outlined.AvTimer,
+                contentDescription = extra.lyricOffset,
+                active = offsetMs != 0L,
+                enabled = enabled,
+                onClick = { showOffsetMenu = true }
+            )
+            DropdownMenu(
+                expanded = showOffsetMenu,
+                onDismissRequest = { showOffsetMenu = false }
+            ) {
+                QuickValueMenu(
+                    label = extra.lyricOffset,
+                    value = formatLyricOffset(offsetMs),
+                    active = offsetMs != 0L,
+                    canDecrease = offsetMs > -10_000L,
+                    canIncrease = offsetMs < 10_000L,
+                    resetLabel = extra.lyricOffsetReset,
+                    onDecrease = { onAdjustOffset(-LYRIC_OFFSET_STEP_MS) },
+                    onIncrease = { onAdjustOffset(LYRIC_OFFSET_STEP_MS) },
+                    onReset = onResetOffset
+                )
+            }
+        }
+        QuickActionButton(
+            icon = Icons.Outlined.ArrowDownward,
+            contentDescription = strings.close,
+            active = false,
+            enabled = true,
+            onClick = onCollapse
+        )
+    }
+}
+
+@Composable
+private fun QuickActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    active: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+        tonalElevation = 3.dp
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.size(42.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(20.dp),
+                tint = if (active) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickValueMenu(
+    label: String,
+    value: String,
+    active: Boolean,
+    canDecrease: Boolean,
+    canIncrease: Boolean,
+    resetLabel: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    onReset: () -> Unit
+) {
+    Column(
+        modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onDecrease,
+                enabled = canDecrease,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Remove,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (active) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(min = 62.dp)
+            )
+            IconButton(
+                onClick = onIncrease,
+                enabled = canIncrease,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            TextButton(
+                onClick = onReset,
+                enabled = active,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                Text(text = resetLabel, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
