@@ -27,6 +27,9 @@ class PlayMusicUseCase @Inject constructor(
     @Volatile
     private var topListenedSongIds: Set<String> = emptySet()
 
+    private val recommendationHistory = ArrayDeque<Song>()
+    private val recommendationHistoryLock = Any()
+
     init {
         scope.launch {
             settingsRepository.playbackMode.distinctUntilChanged().collect { mode ->
@@ -46,6 +49,7 @@ class PlayMusicUseCase @Inject constructor(
     fun observePlayback(): StateFlow<PlaybackState> = playbackState
 
     fun play(song: Song, queue: List<Song>) {
+        clearRecommendationHistory()
         playbackState.update {
             it.copy(
                 currentSong = song,
@@ -59,6 +63,7 @@ class PlayMusicUseCase @Inject constructor(
     }
 
     fun playFromQueue(song: Song) {
+        clearRecommendationHistory()
         playbackState.update { state ->
             val queue = state.queue.ifEmpty { listOf(song) }
             state.copy(
@@ -100,6 +105,7 @@ class PlayMusicUseCase @Inject constructor(
 
     fun skipNext(): Song? {
         var selected: Song? = null
+        var recommendationMode = false
         playbackState.update { state ->
             val currentIndex = state.queue.indexOfFirst { it.id == state.currentSong?.id }
             val currentSong = state.currentSong
@@ -108,6 +114,7 @@ class PlayMusicUseCase @Inject constructor(
             } else {
                 state.queue.filter { it.hasSamePlaybackSourceAs(currentSong) }
             }
+            recommendationMode = state.playbackMode == PlaybackMode.RECOMMENDATION
             val next = when (state.playbackMode) {
                 PlaybackMode.SEQUENTIAL -> state.queue.getOrNull(currentIndex + 1) ?: state.queue.firstOrNull()
                 PlaybackMode.SHUFFLE -> sourceScopedQueue.filterNot { it.id == currentSong?.id }.randomOrNull()
@@ -124,6 +131,9 @@ class PlayMusicUseCase @Inject constructor(
                 durationMs = next?.durationMs ?: 0L,
                 errorMessage = null
             )
+        }
+        if (recommendationMode) {
+            selected?.let { rememberRecommendation(it, playbackState.value.queue.size) }
         }
         return selected
     }
@@ -146,6 +156,7 @@ class PlayMusicUseCase @Inject constructor(
     }
 
     fun setPlaybackMode(mode: PlaybackMode) {
+        if (playbackState.value.playbackMode != mode) clearRecommendationHistory()
         playbackState.update { it.copy(playbackMode = mode) }
         scope.launch {
             settingsRepository.setPlaybackMode(mode)
@@ -196,8 +207,24 @@ class PlayMusicUseCase @Inject constructor(
         val candidates = state.queue.filter { it.id != current.id }
         if (candidates.isEmpty()) return null
 
+        val recentPicks = synchronized(recommendationHistoryLock) { recommendationHistory.toList() }
+        val recentIds = recentPicks.mapTo(HashSet()) { it.id }
+        val freshCandidates = candidates.filterNot { it.id in recentIds }
+        val pool = freshCandidates.ifEmpty { candidates }
+        val recentArtistIds = recentPicks.takeLast(RECENT_ARTIST_WINDOW)
+            .mapNotNull { it.artistId }
+            .toSet()
+        val recentAlbumIds = recentPicks.takeLast(RECENT_ALBUM_WINDOW)
+            .mapNotNull { it.albumId }
+            .toSet()
+
         val listenedIds = topListenedSongIds
-        val scored = candidates.map { song -> Scored(song, recommendationScore(current, song, listenedIds)) }
+        val scored = pool.map { song ->
+            Scored(
+                song,
+                recommendationScore(current, song, listenedIds, recentArtistIds, recentAlbumIds)
+            )
+        }
 
         val maxScore = scored.maxOfOrNull { it.score } ?: 0
         val topTier = scored.filter { it.score == maxScore }
@@ -206,7 +233,13 @@ class PlayMusicUseCase @Inject constructor(
             ?: state.queue.firstOrNull()
     }
 
-    private fun recommendationScore(current: Song, candidate: Song, listenedIds: Set<String>): Int {
+    private fun recommendationScore(
+        current: Song,
+        candidate: Song,
+        listenedIds: Set<String>,
+        recentArtistIds: Set<String>,
+        recentAlbumIds: Set<String>
+    ): Int {
         val currentTags = current.semanticTags.normalizedTagSet()
         val candidateTags = candidate.semanticTags.normalizedTagSet()
         val sharedTags = currentTags intersect candidateTags
@@ -228,7 +261,30 @@ class PlayMusicUseCase @Inject constructor(
             current.releaseYear?.let { currentYear -> kotlin.math.abs(candidateYear - currentYear) }
         }
         if (yearDistance != null && yearDistance <= 3) score += 1
+        if (candidate.artistId != null && candidate.artistId in recentArtistIds) {
+            score -= RECENT_ARTIST_PENALTY
+        }
+        if (candidate.albumId != null && candidate.albumId in recentAlbumIds) {
+            score -= RECENT_ALBUM_PENALTY
+        }
         return score
+    }
+
+    private fun rememberRecommendation(song: Song, queueSize: Int) {
+        val window = (queueSize / 4).coerceIn(MIN_RECOMMENDATION_WINDOW, MAX_RECOMMENDATION_WINDOW)
+        synchronized(recommendationHistoryLock) {
+            recommendationHistory.removeAll { it.id == song.id }
+            recommendationHistory.addLast(song)
+            while (recommendationHistory.size > window) {
+                recommendationHistory.removeFirst()
+            }
+        }
+    }
+
+    private fun clearRecommendationHistory() {
+        synchronized(recommendationHistoryLock) {
+            recommendationHistory.clear()
+        }
     }
 
     private fun Song.hasSamePlaybackSourceAs(other: Song): Boolean {
@@ -259,6 +315,12 @@ class PlayMusicUseCase @Inject constructor(
         private const val TOP_LISTENED_LIMIT = 500
         private const val TOP_LISTENED_REFRESH_MS = 5 * 60 * 1000L
         private const val TOP_LISTENED_WINDOW_MS = 30 * 24 * 3600_000L
+        private const val MIN_RECOMMENDATION_WINDOW = 8
+        private const val MAX_RECOMMENDATION_WINDOW = 24
+        private const val RECENT_ARTIST_WINDOW = 3
+        private const val RECENT_ALBUM_WINDOW = 2
+        private const val RECENT_ARTIST_PENALTY = 6
+        private const val RECENT_ALBUM_PENALTY = 4
     }
 
     private data class Scored(val song: Song, val score: Int)
