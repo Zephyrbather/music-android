@@ -16,6 +16,7 @@ import com.musicplayer.app.domain.repository.AppLanguage
 import com.musicplayer.app.domain.repository.AiProvider
 import com.musicplayer.app.domain.repository.FontFamilyOption
 import com.musicplayer.app.domain.repository.SettingsRepository
+import com.musicplayer.app.domain.repository.TabletLayoutMode
 import com.musicplayer.app.domain.repository.ThemeMode
 import com.musicplayer.app.domain.repository.ThemeStyle
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,6 +40,7 @@ data class SettingsUiState(
     val appLanguage: AppLanguage = AppLanguage.CHINESE,
     val dynamicColor: Boolean = false,
     val editorialLayout: Boolean = true,
+    val tabletLayoutMode: TabletLayoutMode = TabletLayoutMode.AUTO,
     val autoScanLocalLibrary: Boolean = false,
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
@@ -72,8 +74,9 @@ class SettingsViewModel @Inject constructor(
         ) { themeMode, themeStyle, appLanguage, dynamicColor, editorialLayout ->
             arrayOf(themeMode, themeStyle, appLanguage, dynamicColor, editorialLayout)
         },
+        settingsRepository.tabletLayoutMode,
         settingsRepository.fontFamilyOption
-    ) { arr, fontFamily ->
+    ) { arr, tabletLayoutMode, fontFamily ->
         @Suppress("UNCHECKED_CAST")
         AppearanceSettings(
             arr[0] as ThemeMode,
@@ -81,6 +84,7 @@ class SettingsViewModel @Inject constructor(
             arr[2] as AppLanguage,
             arr[3] as Boolean,
             arr[4] as Boolean,
+            tabletLayoutMode,
             fontFamily
         )
     }
@@ -139,6 +143,7 @@ class SettingsViewModel @Inject constructor(
             appLanguage = appearance.appLanguage,
             dynamicColor = appearance.dynamicColor,
             editorialLayout = appearance.editorialLayout,
+            tabletLayoutMode = appearance.tabletLayoutMode,
             autoScanLocalLibrary = library.autoScan,
             autoScrape = scraping.autoScrape,
             backgroundAiScrape = scraping.backgroundAiScrape,
@@ -283,6 +288,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setTabletLayoutMode(mode: TabletLayoutMode) {
+        viewModelScope.launch {
+            settingsRepository.setTabletLayoutMode(mode)
+        }
+    }
+
     fun setFontFamilyOption(option: FontFamilyOption) {
         viewModelScope.launch {
             settingsRepository.setFontFamilyOption(option)
@@ -418,6 +429,7 @@ private data class AppearanceSettings(
     val appLanguage: AppLanguage,
     val dynamicColor: Boolean,
     val editorialLayout: Boolean,
+    val tabletLayoutMode: TabletLayoutMode,
     val fontFamily: FontFamilyOption
 )
 

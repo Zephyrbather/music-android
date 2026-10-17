@@ -15,7 +15,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 interface MetadataScraper {
-    suspend fun enrich(song: Song, provider: MetadataProvider = MetadataProvider.AUTO): Song
+    suspend fun enrich(
+        song: Song,
+        provider: MetadataProvider = MetadataProvider.AUTO,
+        forceRefresh: Boolean = false
+    ): Song
     suspend fun findArtistArtwork(artistName: String): ArtistArtworkResult?
 }
 
@@ -38,48 +42,71 @@ class CompositeMetadataScraper @Inject constructor(
     private val miguScraper: MiguScraper,
     private val cacheManager: CacheManager
 ) : MetadataScraper {
-    override suspend fun enrich(song: Song, provider: MetadataProvider): Song {
+    override suspend fun enrich(song: Song, provider: MetadataProvider, forceRefresh: Boolean): Song {
         val normalized = musicBrainzScraper.normalize(song)
         val localFirst = sidecarMetadataScraper.enrich(normalized)
-        if (provider == MetadataProvider.AUTO) {
-            return enrichMissingAutomatically(localFirst)
+        val enriched = if (provider == MetadataProvider.AUTO) {
+            enrichMissingAutomatically(localFirst, forceRefresh)
+        } else {
+            enrichWithProvider(localFirst, provider, forceRefresh)
         }
+        val swapped = localFirst.swappedTitleAndArtist()
+        if (swapped == null ||
+            !localFirst.hasMissingScrapableMetadata() ||
+            enriched.hasNewMetadataComparedTo(localFirst)
+        ) {
+            return enriched
+        }
+        // Some libraries store "Artist - Title" in the title/artist fields; retry with them swapped.
+        val swappedEnriched = if (provider == MetadataProvider.AUTO) {
+            enrichMissingAutomatically(swapped, forceRefresh)
+        } else {
+            enrichWithProvider(swapped, provider, forceRefresh)
+        }
+        return localFirst.withFallbackMetadataFrom(swappedEnriched)
+    }
+
+    private suspend fun enrichWithProvider(
+        song: Song,
+        provider: MetadataProvider,
+        forceRefresh: Boolean
+    ): Song {
         val online = coroutineScope {
             val lyrics = async {
-                if (localFirst.lyrics.isNullOrBlank()) lyricsByProvider(localFirst, provider) else null
+                if (song.lyrics.isNullOrBlank()) lyricsByProvider(song, provider, forceRefresh) else null
             }
             val artwork = async {
-                if (localFirst.artworkUri.isNullOrBlank()) artworkByProvider(localFirst, provider) else null
+                if (song.artworkUri.isNullOrBlank()) artworkByProvider(song, provider, forceRefresh) else null
             }
             lyrics.await() to artwork.await()
         }
 
-        return localFirst.copy(
-            lyrics = localFirst.lyrics ?: online.first?.lyrics,
-            lyricsProvider = localFirst.lyricsProvider ?: online.first?.provider,
-            artworkUri = localFirst.artworkUri ?: online.second?.imageUri,
-            artworkProvider = localFirst.artworkProvider ?: online.second?.provider
+        return song.copy(
+            lyrics = song.lyrics ?: online.first?.lyrics,
+            lyricsProvider = song.lyricsProvider ?: online.first?.provider,
+            artworkUri = song.artworkUri ?: online.second?.imageUri,
+            artworkProvider = song.artworkProvider ?: online.second?.provider
         )
     }
 
-    private suspend fun enrichMissingAutomatically(song: Song): Song {
+    private suspend fun enrichMissingAutomatically(song: Song, forceRefresh: Boolean): Song {
         val missingLyrics = song.lyrics.isNullOrBlank()
         val missingArtwork = song.artworkUri.isNullOrBlank()
         val missingReleaseDate = song.releaseYear == null
         val missingAlbum = song.albumTitle.isUnresolvedAlbumTitle()
         return when {
             missingLyrics && missingArtwork -> {
-                autoFullMetadataCandidate(song)?.applyTo(song) ?: song
+                autoFullMetadataCandidate(song, forceRefresh)?.applyTo(song) ?: song
             }
             missingAlbum -> {
-                autoFullMetadataCandidate(song)?.applyTo(song) ?: song
+                autoFullMetadataCandidate(song, forceRefresh)?.applyTo(song) ?: song
             }
             missingReleaseDate -> {
-                autoFullMetadataCandidate(song)?.applyTo(song) ?: song
+                autoFullMetadataCandidate(song, forceRefresh)?.applyTo(song) ?: song
             }
             missingLyrics -> {
                 val lyrics = successfulInBatches(
-                    lyricsLoaders(song),
+                    lyricsLoaders(song, forceRefresh),
                     score = { it.score }
                 )
                 if (lyrics == null) song else song.copy(
@@ -89,7 +116,7 @@ class CompositeMetadataScraper @Inject constructor(
             }
             missingArtwork -> {
                 val artwork = successfulInBatches(
-                    artworkLoaders(song),
+                    artworkLoaders(song, forceRefresh),
                     score = { it.score }
                 )
                 if (artwork == null) song else song.copy(
@@ -101,8 +128,8 @@ class CompositeMetadataScraper @Inject constructor(
         }
     }
 
-    private suspend fun autoFullMetadataCandidate(song: Song): TrackMetadataResult? {
-        val loaders = fullMetadataLoaders(song)
+    private suspend fun autoFullMetadataCandidate(song: Song, forceRefresh: Boolean): TrackMetadataResult? {
+        val loaders = fullMetadataLoaders(song, forceRefresh)
         val fastCandidate = bestFullCandidate(loaders.take(FAST_METADATA_SOURCE_COUNT))
         if (fastCandidate != null && fastCandidate.completeness >= FULL_METADATA_THRESHOLD) {
             return fastCandidate
@@ -112,36 +139,44 @@ class CompositeMetadataScraper @Inject constructor(
             .maxWithOrNull(compareBy<TrackMetadataResult> { it.completeness }.thenBy { it.score })
     }
 
-    private suspend fun lyricsByProvider(song: Song, provider: MetadataProvider): LyricsResult? {
+    private suspend fun lyricsByProvider(
+        song: Song,
+        provider: MetadataProvider,
+        forceRefresh: Boolean
+    ): LyricsResult? {
         return when (provider) {
             MetadataProvider.AUTO -> bestSuccessful(
-                *lyricsLoaders(song).toTypedArray()
+                *lyricsLoaders(song, forceRefresh).toTypedArray()
             )
-            MetadataProvider.LRCLIB -> cachedLyrics("lrclib-lyrics", song) { lrcLibScraper.findLyrics(song) }
-            MetadataProvider.NETEASE -> cachedLyrics("netease-lyrics", song) { netEaseScraper.findLyrics(song) }
-            MetadataProvider.MEGALOBIZ -> cachedLyrics("megalobiz-lyrics", song) { megalobizScraper.findLyrics(song) }
-            MetadataProvider.LYRICS_OVH -> cachedLyrics("lyrics-ovh-lyrics", song) { lyricsOvhScraper.findLyrics(song) }
-            MetadataProvider.QQ_MUSIC -> cachedLyrics("qq-lyrics", song) { qqMusicScraper.findLyrics(song) }
-            MetadataProvider.KUGOU -> cachedLyrics("kugou-lyrics", song) { kuGouScraper.findLyrics(song) }
-            MetadataProvider.KUWO -> cachedLyrics("kuwo-lyrics", song) { kuwoScraper.findLyrics(song) }
+            MetadataProvider.LRCLIB -> cachedLyrics("lrclib-lyrics", song, forceRefresh) { lrcLibScraper.findLyrics(song) }
+            MetadataProvider.NETEASE -> cachedLyrics("netease-lyrics", song, forceRefresh) { netEaseScraper.findLyrics(song) }
+            MetadataProvider.MEGALOBIZ -> cachedLyrics("megalobiz-lyrics", song, forceRefresh) { megalobizScraper.findLyrics(song) }
+            MetadataProvider.LYRICS_OVH -> cachedLyrics("lyrics-ovh-lyrics", song, forceRefresh) { lyricsOvhScraper.findLyrics(song) }
+            MetadataProvider.QQ_MUSIC -> cachedLyrics("qq-lyrics", song, forceRefresh) { qqMusicScraper.findLyrics(song) }
+            MetadataProvider.KUGOU -> cachedLyrics("kugou-lyrics", song, forceRefresh) { kuGouScraper.findLyrics(song) }
+            MetadataProvider.KUWO -> cachedLyrics("kuwo-lyrics", song, forceRefresh) { kuwoScraper.findLyrics(song) }
             else -> null
         }
     }
 
-    private suspend fun artworkByProvider(song: Song, provider: MetadataProvider): ArtworkResult? {
+    private suspend fun artworkByProvider(
+        song: Song,
+        provider: MetadataProvider,
+        forceRefresh: Boolean
+    ): ArtworkResult? {
         return when (provider) {
             MetadataProvider.AUTO -> bestSuccessful(
-                *artworkLoaders(song).toTypedArray()
+                *artworkLoaders(song, forceRefresh).toTypedArray()
             )
-            MetadataProvider.MUSICBRAINZ_COVER_ART -> cachedArtwork("cover-art-archive-artwork", song) {
+            MetadataProvider.MUSICBRAINZ_COVER_ART -> cachedArtwork("cover-art-archive-artwork", song, forceRefresh) {
                 coverArtArchiveScraper.findArtwork(song)
             }
-            MetadataProvider.ITUNES -> cachedArtwork("itunes-artwork", song) { iTunesScraper.findArtwork(song) }
-            MetadataProvider.DEEZER -> cachedArtwork("deezer-artwork", song) { deezerScraper.findArtwork(song) }
-            MetadataProvider.NETEASE -> cachedArtwork("netease-artwork", song) { netEaseScraper.findFallbackArtwork(song) }
-            MetadataProvider.QQ_MUSIC -> cachedArtwork("qq-artwork", song) { qqMusicScraper.findArtwork(song) }
-            MetadataProvider.KUGOU -> cachedArtwork("kugou-artwork", song) { kuGouScraper.findArtwork(song) }
-            MetadataProvider.KUWO -> cachedArtwork("kuwo-artwork", song) { kuwoScraper.findArtwork(song) }
+            MetadataProvider.ITUNES -> cachedArtwork("itunes-artwork", song, forceRefresh) { iTunesScraper.findArtwork(song) }
+            MetadataProvider.DEEZER -> cachedArtwork("deezer-artwork", song, forceRefresh) { deezerScraper.findArtwork(song) }
+            MetadataProvider.NETEASE -> cachedArtwork("netease-artwork", song, forceRefresh) { netEaseScraper.findFallbackArtwork(song) }
+            MetadataProvider.QQ_MUSIC -> cachedArtwork("qq-artwork", song, forceRefresh) { qqMusicScraper.findArtwork(song) }
+            MetadataProvider.KUGOU -> cachedArtwork("kugou-artwork", song, forceRefresh) { kuGouScraper.findArtwork(song) }
+            MetadataProvider.KUWO -> cachedArtwork("kuwo-artwork", song, forceRefresh) { kuwoScraper.findArtwork(song) }
             else -> null
         }
     }
@@ -152,38 +187,48 @@ class CompositeMetadataScraper @Inject constructor(
         val artworks: List<ArtworkResult>
     )
 
-    suspend fun collectAllCandidates(song: Song): AllCandidates {
+    suspend fun collectAllCandidates(song: Song, forceRefresh: Boolean = false): AllCandidates {
         val normalized = musicBrainzScraper.normalize(song)
         val searchSong = normalized.withoutExistingMetadata()
+        val primary = collectCandidatesFor(searchSong, forceRefresh)
+        if (primary.tracks.isNotEmpty()) return primary
+        val swapped = searchSong.swappedTitleAndArtist() ?: return primary
+        return collectCandidatesFor(swapped, forceRefresh)
+    }
+
+    private suspend fun collectCandidatesFor(
+        searchSong: Song,
+        forceRefresh: Boolean
+    ): AllCandidates {
         return coroutineScope {
             val candidateListJobs = listOf(
                 async {
-                    cachedTrackCandidates("qq-candidates", searchSong) {
+                    cachedTrackCandidates("qq-candidates", searchSong, forceRefresh) {
                         qqMusicScraper.collectMetadataCandidates(searchSong)
                     }
                 },
                 async {
-                    cachedTrackCandidates("netease-candidates", searchSong) {
+                    cachedTrackCandidates("netease-candidates", searchSong, forceRefresh) {
                         netEaseScraper.collectMetadataCandidates(searchSong)
                     }
                 },
                 async {
-                    cachedTrackCandidates("itunes-candidates", searchSong) {
+                    cachedTrackCandidates("itunes-candidates", searchSong, forceRefresh) {
                         iTunesScraper.collectMetadataCandidates(searchSong)
                     }
                 }
             )
             val candidateJobs = listOf(
-                async { cachedTrack("kuwo-candidate", searchSong) { kuwoScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("kugou-candidate", searchSong) { kuGouScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("migu-candidate", searchSong) { miguScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("lrclib-candidate", searchSong) { lrcLibScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("megalobiz-candidate", searchSong) { megalobizScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("lyrics-ovh-candidate", searchSong) { lyricsOvhScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("cover-art-archive-candidate", searchSong) { coverArtArchiveScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("deezer-candidate", searchSong) { deezerScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("genius-candidate", searchSong) { geniusScraper.collectMetadataCandidate(searchSong) } },
-                async { cachedTrack("jiosaavn-candidate", searchSong) { jioSaavnScraper.collectMetadataCandidate(searchSong) } }
+                async { cachedTrack("kuwo-candidate", searchSong, forceRefresh) { kuwoScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("kugou-candidate", searchSong, forceRefresh) { kuGouScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("migu-candidate", searchSong, forceRefresh) { miguScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("lrclib-candidate", searchSong, forceRefresh) { lrcLibScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("megalobiz-candidate", searchSong, forceRefresh) { megalobizScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("lyrics-ovh-candidate", searchSong, forceRefresh) { lyricsOvhScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("cover-art-archive-candidate", searchSong, forceRefresh) { coverArtArchiveScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("deezer-candidate", searchSong, forceRefresh) { deezerScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("genius-candidate", searchSong, forceRefresh) { geniusScraper.collectMetadataCandidate(searchSong) } },
+                async { cachedTrack("jiosaavn-candidate", searchSong, forceRefresh) { jioSaavnScraper.collectMetadataCandidate(searchSong) } }
             )
 
             val tracks = (candidateListJobs.awaitAll().flatten() + candidateJobs.awaitAll().filterNotNull())
@@ -205,19 +250,19 @@ class CompositeMetadataScraper @Inject constructor(
         )
     }
 
-    private fun fullMetadataLoaders(song: Song): List<suspend () -> TrackMetadataResult?> {
+    private fun fullMetadataLoaders(song: Song, forceRefresh: Boolean): List<suspend () -> TrackMetadataResult?> {
         val cjkFirst = song.prefersCjkSources()
         val cjkLoaders = listOf<suspend () -> TrackMetadataResult?>(
-            { cachedTrack("qq-candidate", song) { qqMusicScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("netease-candidate", song) { netEaseScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("kuwo-candidate", song) { kuwoScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("kugou-candidate", song) { kuGouScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("migu-candidate", song) { miguScraper.collectMetadataCandidate(song) } }
+            { cachedTrack("qq-candidate", song, forceRefresh) { qqMusicScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("netease-candidate", song, forceRefresh) { netEaseScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("kuwo-candidate", song, forceRefresh) { kuwoScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("kugou-candidate", song, forceRefresh) { kuGouScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("migu-candidate", song, forceRefresh) { miguScraper.collectMetadataCandidate(song) } }
         )
         val internationalLoaders = listOf<suspend () -> TrackMetadataResult?>(
-            { cachedTrack("lrclib-candidate", song) { lrcLibScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("itunes-candidate", song) { iTunesScraper.collectMetadataCandidate(song) } },
-            { cachedTrack("deezer-candidate", song) { deezerScraper.collectMetadataCandidate(song) } }
+            { cachedTrack("lrclib-candidate", song, forceRefresh) { lrcLibScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("itunes-candidate", song, forceRefresh) { iTunesScraper.collectMetadataCandidate(song) } },
+            { cachedTrack("deezer-candidate", song, forceRefresh) { deezerScraper.collectMetadataCandidate(song) } }
         )
         return if (cjkFirst) {
             cjkLoaders + internationalLoaders
@@ -226,34 +271,34 @@ class CompositeMetadataScraper @Inject constructor(
         }
     }
 
-    private fun lyricsLoaders(song: Song): List<suspend () -> LyricsResult?> {
+    private fun lyricsLoaders(song: Song, forceRefresh: Boolean): List<suspend () -> LyricsResult?> {
         val cjkLoaders = listOf<suspend () -> LyricsResult?>(
-            { cachedLyrics("qq-lyrics", song) { qqMusicScraper.findLyrics(song) } },
-            { cachedLyrics("netease-lyrics", song) { netEaseScraper.findLyrics(song) } },
-            { cachedLyrics("kuwo-lyrics", song) { kuwoScraper.findLyrics(song) } },
-            { cachedLyrics("kugou-lyrics", song) { kuGouScraper.findLyrics(song) } },
-            { cachedLyrics("migu-lyrics", song) { miguScraper.findLyrics(song) } }
+            { cachedLyrics("qq-lyrics", song, forceRefresh) { qqMusicScraper.findLyrics(song) } },
+            { cachedLyrics("netease-lyrics", song, forceRefresh) { netEaseScraper.findLyrics(song) } },
+            { cachedLyrics("kuwo-lyrics", song, forceRefresh) { kuwoScraper.findLyrics(song) } },
+            { cachedLyrics("kugou-lyrics", song, forceRefresh) { kuGouScraper.findLyrics(song) } },
+            { cachedLyrics("migu-lyrics", song, forceRefresh) { miguScraper.findLyrics(song) } }
         )
         val internationalLoaders = listOf<suspend () -> LyricsResult?>(
-            { cachedLyrics("lrclib-lyrics", song) { lrcLibScraper.findLyrics(song) } },
-            { cachedLyrics("megalobiz-lyrics", song) { megalobizScraper.findLyrics(song) } },
-            { cachedLyrics("lyrics-ovh-lyrics", song) { lyricsOvhScraper.findLyrics(song) } }
+            { cachedLyrics("lrclib-lyrics", song, forceRefresh) { lrcLibScraper.findLyrics(song) } },
+            { cachedLyrics("megalobiz-lyrics", song, forceRefresh) { megalobizScraper.findLyrics(song) } },
+            { cachedLyrics("lyrics-ovh-lyrics", song, forceRefresh) { lyricsOvhScraper.findLyrics(song) } }
         )
         return if (song.prefersCjkSources()) cjkLoaders + internationalLoaders else internationalLoaders + cjkLoaders
     }
 
-    private fun artworkLoaders(song: Song): List<suspend () -> ArtworkResult?> {
+    private fun artworkLoaders(song: Song, forceRefresh: Boolean): List<suspend () -> ArtworkResult?> {
         val cjkLoaders = listOf<suspend () -> ArtworkResult?>(
-            { cachedArtwork("qq-artwork", song) { qqMusicScraper.findArtwork(song) } },
-            { cachedArtwork("netease-artwork", song) { netEaseScraper.findFallbackArtwork(song) } },
-            { cachedArtwork("kuwo-artwork", song) { kuwoScraper.findArtwork(song) } },
-            { cachedArtwork("kugou-artwork", song) { kuGouScraper.findArtwork(song) } },
-            { cachedArtwork("migu-artwork", song) { miguScraper.findArtwork(song) } }
+            { cachedArtwork("qq-artwork", song, forceRefresh) { qqMusicScraper.findArtwork(song) } },
+            { cachedArtwork("netease-artwork", song, forceRefresh) { netEaseScraper.findFallbackArtwork(song) } },
+            { cachedArtwork("kuwo-artwork", song, forceRefresh) { kuwoScraper.findArtwork(song) } },
+            { cachedArtwork("kugou-artwork", song, forceRefresh) { kuGouScraper.findArtwork(song) } },
+            { cachedArtwork("migu-artwork", song, forceRefresh) { miguScraper.findArtwork(song) } }
         )
         val internationalLoaders = listOf<suspend () -> ArtworkResult?>(
-            { cachedArtwork("itunes-artwork", song) { iTunesScraper.findArtwork(song) } },
-            { cachedArtwork("deezer-artwork", song) { deezerScraper.findArtwork(song) } },
-            { cachedArtwork("cover-art-archive-artwork", song) { coverArtArchiveScraper.findArtwork(song) } }
+            { cachedArtwork("itunes-artwork", song, forceRefresh) { iTunesScraper.findArtwork(song) } },
+            { cachedArtwork("deezer-artwork", song, forceRefresh) { deezerScraper.findArtwork(song) } },
+            { cachedArtwork("cover-art-archive-artwork", song, forceRefresh) { coverArtArchiveScraper.findArtwork(song) } }
         )
         return if (song.prefersCjkSources()) cjkLoaders + internationalLoaders else internationalLoaders + cjkLoaders
     }
@@ -290,10 +335,12 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun cachedTrack(
         providerKey: String,
         song: Song,
+        forceRefresh: Boolean,
         loader: suspend () -> TrackMetadataResult?
     ): TrackMetadataResult? = cachedResult(
         cacheKey = song.scrapeCacheKey("track:$providerKey"),
         provider = providerKey,
+        forceRefresh = forceRefresh,
         parse = ::trackFromPayload,
         encode = { it.toPayload() },
         loader = loader
@@ -302,10 +349,12 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun cachedTrackCandidates(
         providerKey: String,
         song: Song,
+        forceRefresh: Boolean,
         loader: suspend () -> List<TrackMetadataResult>
     ): List<TrackMetadataResult> = cachedListResult(
         cacheKey = song.scrapeCacheKey("tracks:$providerKey"),
         provider = providerKey,
+        forceRefresh = forceRefresh,
         parse = ::trackListFromPayload,
         encode = { it.toPayload() },
         loader = loader
@@ -314,10 +363,12 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun cachedLyrics(
         providerKey: String,
         song: Song,
+        forceRefresh: Boolean,
         loader: suspend () -> LyricsResult?
     ): LyricsResult? = cachedResult(
         cacheKey = song.scrapeCacheKey("lyrics:$providerKey"),
         provider = providerKey,
+        forceRefresh = forceRefresh,
         parse = ::lyricsFromPayload,
         encode = { it.toPayload() },
         loader = loader
@@ -326,10 +377,12 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun cachedArtwork(
         providerKey: String,
         song: Song,
+        forceRefresh: Boolean,
         loader: suspend () -> ArtworkResult?
     ): ArtworkResult? = cachedResult(
         cacheKey = song.scrapeCacheKey("artwork:$providerKey"),
         provider = providerKey,
+        forceRefresh = forceRefresh,
         parse = ::artworkFromPayload,
         encode = { it.toPayload() },
         loader = loader
@@ -342,6 +395,7 @@ class CompositeMetadataScraper @Inject constructor(
     ): ArtistArtworkResult? = cachedResult(
         cacheKey = "scrape:artist-artwork:$providerKey:${normalized(artistName)}",
         provider = providerKey,
+        forceRefresh = false,
         parse = ::artistArtworkFromPayload,
         encode = { it.toPayload() },
         loader = loader
@@ -350,14 +404,17 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun <T : Any> cachedResult(
         cacheKey: String,
         provider: String,
+        forceRefresh: Boolean,
         parse: (String) -> T?,
         encode: (T) -> String,
         loader: suspend () -> T?
     ): T? {
         val now = System.currentTimeMillis()
-        cacheManager.get(cacheKey)?.takeIf { it.isFresh(now) }?.let { cached ->
-            if (cached.payload == CACHE_MISS_PAYLOAD) return null
-            parse(cached.payload)?.let { return it }
+        if (!forceRefresh) {
+            cacheManager.get(cacheKey)?.takeIf { it.isFresh(now) }?.let { cached ->
+                if (cached.payload == CACHE_MISS_PAYLOAD) return null
+                parse(cached.payload)?.let { return it }
+            }
         }
         val result = withTimeoutOrNull(SCRAPER_LOADER_TIMEOUT_MS) {
             runCatching { loader() }.getOrNull()
@@ -376,14 +433,17 @@ class CompositeMetadataScraper @Inject constructor(
     private suspend fun cachedListResult(
         cacheKey: String,
         provider: String,
+        forceRefresh: Boolean,
         parse: (String) -> List<TrackMetadataResult>?,
         encode: (List<TrackMetadataResult>) -> String,
         loader: suspend () -> List<TrackMetadataResult>
     ): List<TrackMetadataResult> {
         val now = System.currentTimeMillis()
-        cacheManager.get(cacheKey)?.takeIf { it.isFresh(now) }?.let { cached ->
-            if (cached.payload == CACHE_MISS_PAYLOAD) return emptyList()
-            parse(cached.payload)?.let { return it }
+        if (!forceRefresh) {
+            cacheManager.get(cacheKey)?.takeIf { it.isFresh(now) }?.let { cached ->
+                if (cached.payload == CACHE_MISS_PAYLOAD) return emptyList()
+                parse(cached.payload)?.let { return it }
+            }
         }
         val result = withTimeoutOrNull(SCRAPER_LOADER_TIMEOUT_MS) {
             runCatching { loader() }.getOrNull()
@@ -499,6 +559,41 @@ private fun Song.withoutExistingMetadata(): Song {
         artworkProvider = null,
         releaseYear = null,
         releaseMonth = null
+    )
+}
+
+private fun Song.swappedTitleAndArtist(): Song? {
+    val titleText = title.trim()
+    val artist = artistName.trim()
+    if (titleText.isBlank() || artist.isBlank()) return null
+    if (artist == "Unknown Artist" || artist == "Local Folder") return null
+    if (titleText.equals(artist, ignoreCase = true)) return null
+    return copy(title = artist, artistName = titleText)
+}
+
+private fun Song.hasMissingScrapableMetadata(): Boolean {
+    return lyrics.isNullOrBlank() ||
+        artworkUri.isNullOrBlank() ||
+        releaseYear == null ||
+        albumTitle.isUnresolvedAlbumTitle()
+}
+
+private fun Song.hasNewMetadataComparedTo(before: Song): Boolean {
+    return (before.lyrics.isNullOrBlank() && !lyrics.isNullOrBlank()) ||
+        (before.artworkUri.isNullOrBlank() && !artworkUri.isNullOrBlank()) ||
+        (before.releaseYear == null && releaseYear != null) ||
+        (before.albumTitle.isUnresolvedAlbumTitle() && !albumTitle.isUnresolvedAlbumTitle())
+}
+
+private fun Song.withFallbackMetadataFrom(fallback: Song): Song {
+    return copy(
+        albumTitle = albumTitle.takeUnless { it.isUnresolvedAlbumTitle() } ?: fallback.albumTitle,
+        releaseYear = releaseYear ?: fallback.releaseYear,
+        releaseMonth = releaseMonth ?: fallback.releaseMonth,
+        lyrics = lyrics ?: fallback.lyrics,
+        lyricsProvider = lyricsProvider ?: fallback.lyricsProvider,
+        artworkUri = artworkUri ?: fallback.artworkUri,
+        artworkProvider = artworkProvider ?: fallback.artworkProvider
     )
 }
 

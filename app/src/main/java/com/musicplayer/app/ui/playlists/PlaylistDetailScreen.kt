@@ -11,9 +11,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Merge
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -28,12 +32,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.components.SongListItem
+import com.musicplayer.app.ui.components.shareSongs
 import com.musicplayer.app.ui.i18n.LocalStrings
 
 @Composable
@@ -49,6 +56,8 @@ fun PlaylistDetailScreen(
     val playlist = state.playlists.find { it.id == playlistId }
     val otherPlaylists = state.playlists.filter { it.id != playlistId }
     val strings = LocalStrings.current
+    val isPadLayout = LocalPadLayout.current
+    val context = LocalContext.current
 
     var showMergeDialog by remember { mutableStateOf(false) }
     var deleteSongTarget by remember { mutableStateOf<Song?>(null) }
@@ -71,6 +80,17 @@ fun PlaylistDetailScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (songs.isNotEmpty()) {
+                IconButton(onClick = {
+                    shareSongs(
+                        context,
+                        playlist?.name ?: strings.playlist,
+                        songs
+                    )
+                }) {
+                    Icon(Icons.Outlined.Share, contentDescription = strings.share)
+                }
+            }
             if (otherPlaylists.isNotEmpty()) {
                 IconButton(onClick = { showMergeDialog = true }) {
                     Icon(Icons.Outlined.Merge, contentDescription = strings.mergeFromPlaylist)
@@ -86,8 +106,10 @@ fun PlaylistDetailScreen(
                 modifier = Modifier.padding(20.dp)
             )
         } else {
-            LazyColumn(
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
                 contentPadding = PaddingValues(20.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 16.dp else 0.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(

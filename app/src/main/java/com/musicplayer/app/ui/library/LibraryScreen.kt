@@ -3,11 +3,20 @@ package com.musicplayer.app.ui.library
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,12 +26,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
@@ -33,6 +51,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Person
@@ -63,6 +82,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -70,13 +90,22 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -91,14 +120,27 @@ import com.musicplayer.app.domain.model.Source
 import com.musicplayer.app.domain.model.albumGroupingId
 import com.musicplayer.app.domain.model.artistGroupingId
 import com.musicplayer.app.domain.model.formatReleaseDate
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.components.AlbumCard
 import com.musicplayer.app.ui.components.EditSongDialog
 import com.musicplayer.app.ui.components.FastScrollIndex
 import com.musicplayer.app.ui.components.SongActionHeader
 import com.musicplayer.app.ui.components.SongArtwork
+import com.musicplayer.app.ui.components.SongTagsDialog
+import com.musicplayer.app.ui.components.TagSongsDialog
+import com.musicplayer.app.ui.components.shareSongs
+import com.musicplayer.app.ui.components.collectSongTags
 import com.musicplayer.app.ui.components.libraryDetailLabel
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
+import com.musicplayer.app.domain.usecase.SongTagGenerationResult
 import java.io.File
+import kotlin.math.acos
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.random.Random
 import kotlinx.coroutines.launch
 
 @Composable
@@ -113,6 +155,7 @@ fun LibraryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
     val downloadDir = remember {
         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "WebDAV")
     }
@@ -194,6 +237,7 @@ fun LibraryScreen(
                                 LibraryTab.SONGS -> strings.songs
                                 LibraryTab.ALBUMS -> strings.albums
                                 LibraryTab.ARTISTS -> strings.artists
+                                LibraryTab.TAGS -> extra.tags
                             }
                         )
                     }
@@ -214,6 +258,8 @@ fun LibraryScreen(
                 onRemoveFromLibrary = viewModel::removeFromLibrary,
                 onDeleteFile = viewModel::deleteLocalFile,
                 onDownload = { viewModel.downloadSong(it, downloadDir) },
+                onUpdateTags = viewModel::updateSongTags,
+                onGenerateTags = viewModel::generateSongTags,
                 downloadProgress = downloadProgress,
                 currentSong = currentSong
             )
@@ -224,6 +270,14 @@ fun LibraryScreen(
                 onSortModeChange = viewModel::setAlbumSortMode
             )
             LibraryTab.ARTISTS -> ArtistList(state = state, onOpenArtist = onOpenArtist)
+            LibraryTab.TAGS -> TagBrowser(
+                songs = state.songs,
+                onPlaySong = onPlaySong,
+                onUpdateTags = viewModel::updateSongTags,
+                onGenerateTags = viewModel::generateSongTags,
+                onAddTagToSongs = viewModel::addTagToSongs,
+                onDeleteTag = viewModel::deleteTag
+            )
         }
     }
 
@@ -257,17 +311,23 @@ private fun SongList(
     onRemoveFromLibrary: (Song) -> Unit = {},
     onDeleteFile: (Song) -> Unit = {},
     onDownload: (Song) -> Unit = {},
+    onUpdateTags: (String, List<String>) -> Unit = { _, _ -> },
+    onGenerateTags: suspend (Song) -> SongTagGenerationResult = { SongTagGenerationResult.Failed },
     downloadProgress: DownloadProgress = DownloadProgress(),
     currentSong: Song? = null
 ) {
     val context = LocalContext.current
     val strings = LocalStrings.current
-    val listState = rememberLazyListState()
+    val extra = LocalExtraStrings.current
+    val isPadLayout = LocalPadLayout.current
+    val listState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     var menuSong by remember { mutableStateOf<Song?>(null) }
     var editSong by remember { mutableStateOf<Song?>(null) }
+    var tagSong by remember { mutableStateOf<Song?>(null) }
     var removeSong by remember { mutableStateOf<Song?>(null) }
     var deleteFileSong by remember { mutableStateOf<Song?>(null) }
+    val allTags = remember(state.songs) { collectSongTags(state.songs) }
     val alphabet = remember { ('A'..'Z').map { it.toString() } + "#" }
     val songLetters = state.songIndexLetters
     val firstIndexByLetter = state.firstSongIndexByLetter
@@ -280,10 +340,17 @@ private fun SongList(
         Box(
             modifier = Modifier.weight(1f),
         ) {
-            LazyColumn(
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 20.dp, top = 20.dp, bottom = 20.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = if (isPadLayout) 24.dp else 20.dp,
+                    top = 20.dp,
+                    bottom = 20.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 16.dp else 0.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(
@@ -395,6 +462,10 @@ private fun SongList(
                 menuSong = null
                 editSong = song
             },
+            onEditTags = {
+                menuSong = null
+                tagSong = song
+            },
             onRemoveFromLibrary = {
                 menuSong = null
                 removeSong = song
@@ -420,6 +491,19 @@ private fun SongList(
                 editSong = null
             },
             onDismiss = { editSong = null }
+        )
+    }
+
+    tagSong?.let { song ->
+        SongTagsDialog(
+            song = song,
+            allTags = allTags,
+            onSave = { tags ->
+                onUpdateTags(song.id, tags)
+                tagSong = null
+            },
+            onGenerateWithAi = onGenerateTags,
+            onDismiss = { tagSong = null }
         )
     }
 
@@ -522,6 +606,7 @@ private fun SongActionSheet(
     onOpenArtist: () -> Unit,
     onOpenAlbum: () -> Unit,
     onEditInfo: () -> Unit = {},
+    onEditTags: () -> Unit = {},
     onRemoveFromLibrary: () -> Unit = {},
     onDeleteFile: () -> Unit = {},
     onDownload: () -> Unit = {},
@@ -592,6 +677,15 @@ private fun SongActionSheet(
             headlineContent = { Text(strings.editInfo) },
             leadingContent = { Icon(Icons.Outlined.MoreVert, contentDescription = null) },
             modifier = Modifier.clickable(onClick = onEditInfo)
+        )
+        ListItem(
+            headlineContent = { Text(LocalExtraStrings.current.tags) },
+            supportingContent = {
+                val tagText = song.semanticTags.takeIf { it.isNotEmpty() }?.joinToString(" ") { "#$it" }
+                if (tagText != null) Text(tagText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            leadingContent = { Icon(Icons.Outlined.Label, contentDescription = null) },
+            modifier = Modifier.clickable(onClick = onEditTags)
         )
         ListItem(
             headlineContent = { Text(strings.removeFromLibrary) },
@@ -685,11 +779,23 @@ private fun AlbumList(
     onOpenAlbum: (String) -> Unit,
     onSortModeChange: (AlbumSortMode) -> Unit
 ) {
-    LazyColumn(
-        contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    val isPadLayout = LocalPadLayout.current
+    LazyVerticalGrid(
+        columns = if (isPadLayout) {
+            GridCells.Adaptive(minSize = 200.dp)
+        } else {
+            GridCells.Fixed(1)
+        },
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            end = if (isPadLayout) 24.dp else 20.dp,
+            top = 8.dp,
+            bottom = 20.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             val strings = LocalStrings.current
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -780,7 +886,8 @@ private fun ArtistList(
     onOpenArtist: (String) -> Unit
 ) {
     val strings = LocalStrings.current
-    val listState = rememberLazyListState()
+    val isPadLayout = LocalPadLayout.current
+    val listState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val alphabet = remember { ('A'..'Z').map { it.toString() } + "#" }
     val artistLetters = state.artistIndexLetters
@@ -790,9 +897,16 @@ private fun ArtistList(
     }
     Row(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
-            LazyColumn(
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
                 state = listState,
-                contentPadding = PaddingValues(start = 20.dp, top = 20.dp, bottom = 20.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = if (isPadLayout) 24.dp else 20.dp,
+                    top = 20.dp,
+                    bottom = 20.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 16.dp else 0.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
@@ -880,18 +994,15 @@ fun ArtistDetailScreen(
         artist?.name?.let { artistInfoViewModel.load(it) }
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
+    DetailContent(
+        isPadLayout = LocalPadLayout.current,
+        topBar = {
             DetailTopBar(
                 title = artist?.name ?: LocalStrings.current.artists,
                 onBack = onBack
             )
-        }
-        item {
+        },
+        header = {
             ArtistHeader(
                 artist = artist,
                 onlineInfo = artistInfoState.info,
@@ -900,17 +1011,12 @@ fun ArtistDetailScreen(
                     artist?.name?.let { artistInfoViewModel.scrapeAvatar(it) }
                 }
             )
-        }
-        items(
-            items = songs,
-            key = { it.id },
-            contentType = { "artist-song" }
-        ) { song ->
-            DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
-        }
-    }
+        },
+        songs = songs,
+        onPlaySong = onPlaySong,
+        modifier = modifier
+    )
 }
-
 @Composable
 fun AlbumDetailScreen(
     albumId: String,
@@ -927,26 +1033,77 @@ fun AlbumDetailScreen(
         state.songs.filter { it.albumGroupingId() == albumId }
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
+    DetailContent(
+        isPadLayout = LocalPadLayout.current,
+        topBar = {
             DetailTopBar(
                 title = album?.title ?: LocalStrings.current.albums,
                 onBack = onBack
             )
-        }
-        item {
+        },
+        header = {
             AlbumHeader(album = album, songs = songs)
+        },
+        songs = songs,
+        onPlaySong = onPlaySong,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun DetailContent(
+    isPadLayout: Boolean,
+    topBar: @Composable () -> Unit,
+    header: @Composable () -> Unit,
+    songs: List<Song>,
+    onPlaySong: (Song, List<Song>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (isPadLayout) {
+        Row(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp)
+        ) {
+            Column(
+                modifier = Modifier.width(340.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                topBar()
+                header()
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(
+                    items = songs,
+                    key = { it.id },
+                    contentType = { "detail-song" }
+                ) { song ->
+                    DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
+                }
+            }
         }
-        items(
-            items = songs,
-            key = { it.id },
-            contentType = { "album-song" }
-        ) { song ->
-            DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
+    } else {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item { topBar() }
+            item { header() }
+            items(
+                items = songs,
+                key = { it.id },
+                contentType = { "detail-song" }
+            ) { song ->
+                DetailSongRow(song = song, onDoubleTap = { onPlaySong(song, songs) })
+            }
         }
     }
 }
@@ -1299,4 +1456,463 @@ private fun Song.searchSubtitle(): String {
         semanticTags.takeIf { it.isNotEmpty() }?.take(3)?.joinToString(" ") { "#$it" }?.let { add(it) }
     }
     return details.joinToString(" · ")
+}
+
+private data class TagCount(val name: String, val count: Int)
+
+private data class PlanetNode(
+    val tag: TagCount,
+    val color: Color,
+    val widthDp: Float,
+    val heightDp: Float,
+    val x: Float,
+    val y: Float,
+    val depth: Float
+)
+
+@Composable
+private fun TagBrowser(
+    songs: List<Song>,
+    onPlaySong: (Song, List<Song>) -> Unit,
+    onUpdateTags: (String, List<String>) -> Unit,
+    onGenerateTags: suspend (Song) -> SongTagGenerationResult,
+    onAddTagToSongs: (String, Set<String>) -> Unit,
+    onDeleteTag: (String) -> Unit
+) {
+    val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
+    val isPadLayout = LocalPadLayout.current
+    val allTags = remember(songs) { collectSongTags(songs) }
+    val tagCounts = remember(songs) {
+        val counts = LinkedHashMap<String, Pair<String, Int>>()
+        songs.forEach { song ->
+            song.semanticTags.forEach { raw ->
+                val tag = raw.trim()
+                if (tag.isBlank()) return@forEach
+                val key = tag.lowercase()
+                val current = counts[key]
+                counts[key] = if (current == null) tag to 1 else current.first to current.second + 1
+            }
+        }
+        counts.values
+            .map { TagCount(it.first, it.second) }
+            .sortedWith(compareByDescending<TagCount> { it.count }.thenBy { it.name.lowercase() })
+    }
+    var selectedTag by remember { mutableStateOf<String?>(null) }
+    var tagSong by remember { mutableStateOf<Song?>(null) }
+    val activeTag = selectedTag?.let { key ->
+        tagCounts.firstOrNull { it.name.equals(key, ignoreCase = true) }
+    }
+    val visibleSongs = remember(songs, activeTag) {
+        if (activeTag == null) {
+            emptyList()
+        } else {
+            songs.filter { song ->
+                song.semanticTags.any { it.equals(activeTag.name, ignoreCase = true) }
+            }
+        }
+    }
+
+    val context = LocalContext.current
+    var showNewTagDialog by remember { mutableStateOf(false) }
+    var addSongsTargetTag by remember { mutableStateOf<String?>(null) }
+    var deleteTagTarget by remember { mutableStateOf<String?>(null) }
+
+    if (tagCounts.isEmpty()) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = extra.noTags,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            TextButton(onClick = { showNewTagDialog = true }) {
+                Icon(Icons.Outlined.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(extra.newTag)
+            }
+        }
+    } else if (activeTag == null) {
+        TagPlanet(
+            tags = tagCounts,
+            songCount = songs.size,
+            onSelectTag = { selectedTag = it },
+            onCreateTag = { showNewTagDialog = true }
+        )
+    } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 20.dp, top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { selectedTag = null }) {
+                    Icon(Icons.Outlined.ArrowBack, contentDescription = extra.backToPlanet)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "#${activeTag.name}",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "${visibleSongs.size}${strings.songsCountSuffix}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = {
+                    shareSongs(context, "#${activeTag.name}", visibleSongs)
+                }) {
+                    Icon(Icons.Outlined.Share, contentDescription = strings.share)
+                }
+                IconButton(onClick = { addSongsTargetTag = activeTag.name }) {
+                    Icon(Icons.Outlined.PlaylistAdd, contentDescription = extra.addSongsToTag)
+                }
+                IconButton(onClick = { deleteTagTarget = activeTag.name }) {
+                    Icon(Icons.Outlined.DeleteForever, contentDescription = extra.deleteTag)
+                }
+                TextButton(onClick = { selectedTag = null }) {
+                    Text(extra.backToPlanet)
+                }
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = if (isPadLayout) 24.dp else 20.dp,
+                    top = 8.dp,
+                    bottom = 20.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 16.dp else 0.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(
+                    items = visibleSongs,
+                    key = { it.id },
+                    contentType = { "tag-song" }
+                ) { song ->
+                    LibrarySongRow(
+                        song = song,
+                        onDoubleTap = { onPlaySong(song, visibleSongs) },
+                        onMoreClick = { tagSong = song }
+                    )
+                }
+                if (visibleSongs.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            text = extra.noTaggedSongs,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showNewTagDialog) {
+        TagSongsDialog(
+            title = extra.newTag,
+            fixedTagName = null,
+            songs = songs,
+            onConfirm = { name, ids ->
+                onAddTagToSongs(name, ids)
+                selectedTag = name
+                showNewTagDialog = false
+            },
+            onDismiss = { showNewTagDialog = false }
+        )
+    }
+
+    addSongsTargetTag?.let { tag ->
+        TagSongsDialog(
+            title = "#$tag",
+            fixedTagName = tag,
+            songs = songs.filterNot { song ->
+                song.semanticTags.any { it.equals(tag, ignoreCase = true) }
+            },
+            onConfirm = { _, ids ->
+                onAddTagToSongs(tag, ids)
+                addSongsTargetTag = null
+            },
+            onDismiss = { addSongsTargetTag = null }
+        )
+    }
+
+    deleteTagTarget?.let { tag ->
+        AlertDialog(
+            onDismissRequest = { deleteTagTarget = null },
+            title = { Text(extra.deleteTag) },
+            text = { Text(extra.deleteTagConfirmFormat.format(tag)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteTag(tag)
+                    if (selectedTag?.equals(tag, ignoreCase = true) == true) selectedTag = null
+                    deleteTagTarget = null
+                }) {
+                    Text(extra.deleteTag)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTagTarget = null }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
+    }
+
+    tagSong?.let { song ->
+        SongTagsDialog(
+            song = song,
+            allTags = allTags,
+            onSave = { tags ->
+                onUpdateTags(song.id, tags)
+                tagSong = null
+            },
+            onGenerateWithAi = onGenerateTags,
+            onDismiss = { tagSong = null }
+        )
+    }
+}
+
+@Composable
+private fun TagPlanet(
+    tags: List<TagCount>,
+    songCount: Int,
+    onSelectTag: (String) -> Unit,
+    onCreateTag: () -> Unit
+) {
+    val extra = LocalExtraStrings.current
+    val densityInfo = LocalDensity.current
+    val spinTransition = rememberInfiniteTransition(label = "tag-planet")
+    val autoSpin by spinTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(120_000, easing = LinearEasing)),
+        label = "tag-planet-spin"
+    )
+    var dragSpin by remember { mutableFloatStateOf(0f) }
+    var dragTilt by remember { mutableFloatStateOf(0f) }
+    val colors = listOf(
+        MaterialTheme.colorScheme.primary,
+        MaterialTheme.colorScheme.secondary,
+        MaterialTheme.colorScheme.tertiary
+    )
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val starPositions = remember {
+        val random = Random(7)
+        List(46) { Offset(random.nextFloat(), random.nextFloat()) }
+    }
+    val maxCount = tags.maxOf { it.count }.coerceAtLeast(1)
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    dragSpin = (dragSpin + dragAmount.x * 0.22f) % 360f
+                    dragTilt = (dragTilt + dragAmount.y * 0.14f).coerceIn(-55f, 55f)
+                }
+            }
+    ) {
+        val widthPx = with(densityInfo) { maxWidth.toPx() }
+        val heightPx = with(densityInfo) { maxHeight.toPx() }
+        val center = Offset(widthPx / 2f, heightPx * 0.47f)
+        val radius = min(widthPx, heightPx) * 0.43f
+        val coreRadius = radius * 0.2f
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            starPositions.forEachIndexed { index, star ->
+                drawCircle(
+                    color = colors[index % colors.size].copy(alpha = 0.22f),
+                    radius = (1.2f + (index % 3)) * densityInfo.density,
+                    center = Offset(star.x * size.width, star.y * size.height)
+                )
+            }
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        colors[0].copy(alpha = 0.20f),
+                        colors[2].copy(alpha = 0.08f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = radius * 1.08f
+                ),
+                radius = radius * 1.08f,
+                center = center
+            )
+            val ringRadii = listOf(0.68f, 0.9f, 1.1f)
+            ringRadii.forEachIndexed { index, factor ->
+                val r = radius * factor
+                drawOval(
+                    color = colors[index % colors.size].copy(alpha = 0.24f),
+                    topLeft = Offset(center.x - r, center.y - r * 0.42f),
+                    size = Size(r * 2f, r * 0.84f),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        colors[0].copy(alpha = 0.75f),
+                        colors[1].copy(alpha = 0.45f),
+                        colors[2].copy(alpha = 0.18f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = coreRadius * 2.4f
+                ),
+                radius = coreRadius * 2.4f,
+                center = center
+            )
+        }
+
+        val goldenAngle = 2.39996323f
+        val tiltRad = Math.toRadians(dragTilt.toDouble())
+        val nodes = tags.mapIndexed { index, tag ->
+            val fraction = (index + 0.5f) / tags.size
+            val latitude = acos((1f - 2f * fraction).coerceIn(-1f, 1f).toDouble())
+            val azimuth = goldenAngle * index + Math.toRadians((autoSpin + dragSpin).toDouble())
+            val ringX = sin(latitude) * cos(azimuth)
+            val ringZ = sin(latitude) * sin(azimuth)
+            val y = cos(latitude) * cos(tiltRad) - ringZ * sin(tiltRad)
+            val z = cos(latitude) * sin(tiltRad) + ringZ * cos(tiltRad)
+            val depth = ((z + 1.0) / 2.0).toFloat().coerceIn(0f, 1f)
+            val scale = 0.82f + 0.30f * depth
+            val heightDp = (58f + 26f * kotlin.math.sqrt(tag.count.toFloat() / maxCount)) * scale
+            val widthDp = maxOf(heightDp, tag.name.length * 12.5f + 28f)
+            val widthPx = widthDp * densityInfo.density
+            val heightPx = heightDp * densityInfo.density
+            PlanetNode(
+                tag = tag,
+                color = colors[index % colors.size],
+                widthDp = widthDp,
+                heightDp = heightDp,
+                x = center.x + (ringX * radius).toFloat() - widthPx / 2f,
+                y = center.y + (y * radius * 0.82).toFloat() - heightPx / 2f,
+                depth = depth
+            )
+        }.sortedBy { it.depth }
+
+        nodes.forEach { node ->
+            PlanetTagNode(
+                tag = node.tag,
+                color = node.color,
+                surfaceColor = surfaceColor,
+                width = node.widthDp.dp,
+                height = node.heightDp.dp,
+                x = node.x,
+                yPx = node.y,
+                depth = node.depth,
+                onClick = { onSelectTag(node.tag.name) }
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = extra.tagPlanetTitle,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                text = extra.tagPlanetCountFormat.format(tags.size, songCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            tonalElevation = 0.dp
+        ) {
+            TextButton(onClick = onCreateTag) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(extra.newTag)
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 14.dp),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            tonalElevation = 0.dp
+        ) {
+            Text(
+                text = extra.tagPlanetHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlanetTagNode(
+    tag: TagCount,
+    color: Color,
+    surfaceColor: Color,
+    width: Dp,
+    height: Dp,
+    x: Float,
+    yPx: Float,
+    depth: Float,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(x.roundToInt(), yPx.roundToInt()) }
+            .size(width = width, height = height)
+            .graphicsLayer { alpha = 0.4f + 0.6f * depth }
+            .shadow(elevation = (4f + 10f * depth).dp, shape = shape, ambientColor = color, spotColor = color)
+            .clip(shape)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        color.copy(alpha = 0.55f),
+                        surfaceColor.copy(alpha = 0.92f)
+                    )
+                )
+            )
+            .border(width = 1.dp, color = color.copy(alpha = 0.75f), shape = shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "#${tag.name}",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = tag.count.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
 }

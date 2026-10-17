@@ -114,6 +114,11 @@ class PlayerViewModel @Inject constructor(
     val desktopLyricsEnabled: StateFlow<Boolean> = settingsRepository.desktopLyricsEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    private val lyricOffsetPrefs =
+        context.getSharedPreferences("lyric_offsets", Context.MODE_PRIVATE)
+    private val _lyricOffsetMs = MutableStateFlow(0L)
+    val lyricOffsetMs: StateFlow<Long> = _lyricOffsetMs.asStateFlow()
+
     private var lastPlayStartMs: Long = 0L
     private var lastPlaySongId: String? = null
 
@@ -123,8 +128,22 @@ class PlayerViewModel @Inject constructor(
                 recordPlayEnd()
                 lastPlaySongId = songId
                 lastPlayStartMs = if (songId != null) System.currentTimeMillis() else 0L
+                _lyricOffsetMs.value = songId?.let { lyricOffsetPrefs.getLong(it, 0L) } ?: 0L
             }
         }
+    }
+
+    fun adjustLyricOffset(deltaMs: Long) {
+        val songId = playbackState.value.currentSong?.id ?: return
+        val next = (_lyricOffsetMs.value + deltaMs).coerceIn(-10_000L, 10_000L)
+        _lyricOffsetMs.value = next
+        lyricOffsetPrefs.edit().putLong(songId, next).apply()
+    }
+
+    fun resetLyricOffset() {
+        val songId = playbackState.value.currentSong?.id ?: return
+        _lyricOffsetMs.value = 0L
+        lyricOffsetPrefs.edit().remove(songId).apply()
     }
 
     private fun recordPlayEnd() {
@@ -420,7 +439,7 @@ class PlayerViewModel @Inject constructor(
                 song.withoutScrapeSourceMetadata()
             }
             val candidates = runCatching {
-                collectCandidatesUseCase(searchSong, ctrl.scrapeSearchMode)
+                collectCandidatesUseCase(searchSong, ctrl.scrapeSearchMode, forceRefresh = true)
             }.getOrElse {
                 ScrapeCandidates(lyrics = emptyList(), artworks = emptyList())
             }
@@ -674,7 +693,7 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             _candidates.value = null
             _showCandidateDialog.value = true
-            _candidates.value = collectCandidatesUseCase(song)
+            _candidates.value = collectCandidatesUseCase(song, forceRefresh = true)
         }
     }
 

@@ -17,9 +17,10 @@ class CollectScrapeCandidatesUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(
         song: Song,
-        mode: ScrapeSearchMode = ScrapeSearchMode.ALL
+        mode: ScrapeSearchMode = ScrapeSearchMode.ALL,
+        forceRefresh: Boolean = false
     ): ScrapeCandidates {
-        val all = compositeMetadataScraper.collectAllCandidates(song)
+        val all = compositeMetadataScraper.collectAllCandidates(song, forceRefresh)
         val tracks = all.tracks.mapNotNull { it.toCandidate(mode) }
         return ScrapeCandidates(
             lyrics = tracks.mapNotNull { it.lyrics }.sortedByDescending { it.score },

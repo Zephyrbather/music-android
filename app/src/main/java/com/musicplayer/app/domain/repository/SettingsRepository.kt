@@ -16,7 +16,13 @@ enum class ThemeStyle {
     ROSE,
     TWILIGHT_PURPLE,
     MONO,
-    IMMERSIVE
+    IMMERSIVE,
+    PANDA,
+    CYBERPUNK,
+    SAKURA,
+    AURORA,
+    SUNSET,
+    LAVA
 }
 
 enum class FontFamilyOption {
@@ -30,6 +36,12 @@ enum class AppLanguage {
     ENGLISH
 }
 
+enum class TabletLayoutMode {
+    AUTO,
+    ENABLED,
+    DISABLED
+}
+
 enum class AiProvider {
     DEEPSEEK
 }
@@ -40,6 +52,7 @@ interface SettingsRepository {
     val appLanguage: Flow<AppLanguage>
     val dynamicColorEnabled: Flow<Boolean>
     val editorialLayoutEnabled: Flow<Boolean>
+    val tabletLayoutMode: Flow<TabletLayoutMode>
     val autoScanLocalLibraryEnabled: Flow<Boolean>
     val autoScrapeEnabled: Flow<Boolean>
     val backgroundAiScrapeEnabled: Flow<Boolean>
@@ -60,6 +73,7 @@ interface SettingsRepository {
     suspend fun setAppLanguage(language: AppLanguage)
     suspend fun setDynamicColorEnabled(enabled: Boolean)
     suspend fun setEditorialLayoutEnabled(enabled: Boolean)
+    suspend fun setTabletLayoutMode(mode: TabletLayoutMode)
     suspend fun setAutoScanLocalLibraryEnabled(enabled: Boolean)
     suspend fun setAutoScrapeEnabled(enabled: Boolean)
     suspend fun setBackgroundAiScrapeEnabled(enabled: Boolean)

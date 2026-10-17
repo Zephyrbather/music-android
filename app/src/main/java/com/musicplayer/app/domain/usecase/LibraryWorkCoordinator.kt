@@ -81,7 +81,7 @@ class LibraryWorkCoordinator @Inject constructor(
                         running = false,
                         completed = songs.size,
                         total = songs.size,
-                        discovered = discovered,
+                        discovered = songs.size,
                         lastResult = "scan:${songs.size}"
                     )
                 }
@@ -100,32 +100,33 @@ class LibraryWorkCoordinator @Inject constructor(
         if (state.value.running) return
         scope.launch(appDispatchers.scraper) {
             settingsRepository.clearScrapeResume()
-            runScrape(freshStart = true)
+            runScrape(freshStart = true, forceRefresh = true)
         }
     }
 
     fun resumeScrapeMissing() {
         if (state.value.running) return
         scope.launch(appDispatchers.scraper) {
-            runScrape(freshStart = false)
+            runScrape(freshStart = false, forceRefresh = true)
         }
     }
 
-    private suspend fun runScrape(freshStart: Boolean) {
+    private suspend fun runScrape(freshStart: Boolean, forceRefresh: Boolean) {
         cpuPerformanceManager.setBackgroundPriority()
         val allSongs = musicRepository.observeSongs().first()
         val aiFeaturesEnabled = settingsRepository.aiFeaturesEnabled.first()
         val requestedAiMetadataScrape = aiFeaturesEnabled && settingsRepository.backgroundAiScrapeEnabled.first()
         val requestedAiCategoryScrape = aiFeaturesEnabled && settingsRepository.aiCategoryScrapeEnabled.first()
-        val requiresAi = requestedAiMetadataScrape || requestedAiCategoryScrape
-        val apiKey = if (requiresAi) settingsRepository.aiApiKey.first() else ""
-        val model = if (requiresAi) settingsRepository.aiModel.first() else ""
-        if (requiresAi && apiKey.isBlank()) {
+        val requiresAiCredentials = aiFeaturesEnabled
+        val apiKey = if (requiresAiCredentials) settingsRepository.aiApiKey.first() else ""
+        val model = if (requiresAiCredentials) settingsRepository.aiModel.first() else ""
+        if ((requestedAiMetadataScrape || requestedAiCategoryScrape) && apiKey.isBlank()) {
             if (requestedAiMetadataScrape) settingsRepository.setBackgroundAiScrapeEnabled(false)
             if (requestedAiCategoryScrape) settingsRepository.setAiCategoryScrapeEnabled(false)
         }
-        val useAiMetadataScrape = requestedAiMetadataScrape && apiKey.isNotBlank()
-        val useAiCategoryScrape = requestedAiCategoryScrape && apiKey.isNotBlank()
+        val aiReady = aiFeaturesEnabled && apiKey.isNotBlank()
+        val useAiMetadataScrape = requestedAiMetadataScrape && aiReady
+        val useAiCategoryScrape = requestedAiCategoryScrape && aiReady
         val allCandidates = allSongs.filter {
             it.needsMetadataScrape() || (useAiCategoryScrape && it.needsCategoryScrape())
         }
@@ -165,9 +166,13 @@ class LibraryWorkCoordinator @Inject constructor(
                             if (song.needsMetadataScrape()) {
                                 val normal = fetchMetadataUseCase(
                                     songId = song.id,
-                                    rebuildLibraryArtwork = false
+                                    rebuildLibraryArtwork = false,
+                                    forceRefresh = forceRefresh
                                 )
-                                resultSong = if (useAiMetadataScrape && normal?.hasMoreMetadataThan(song) != true) {
+                                val normalFoundMetadata = normal?.hasMoreMetadataThan(song) == true
+                                val shouldTryAi = (aiReady && !normalFoundMetadata) ||
+                                    (useAiMetadataScrape && (normal ?: song).needsMetadataScrape())
+                                resultSong = if (shouldTryAi) {
                                     when (val result = aiScrapeMetadataUseCase(
                                         song = song,
                                         apiKey = apiKey,

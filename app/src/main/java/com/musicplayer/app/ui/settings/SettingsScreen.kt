@@ -7,13 +7,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -58,10 +61,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.musicplayer.app.domain.repository.AppLanguage
 import com.musicplayer.app.domain.repository.AiProvider
 import com.musicplayer.app.domain.repository.FontFamilyOption
+import com.musicplayer.app.domain.repository.TabletLayoutMode
 import com.musicplayer.app.domain.repository.ThemeMode
 import com.musicplayer.app.domain.repository.ThemeStyle
 import com.musicplayer.app.domain.usecase.LibraryWorkState
 import com.musicplayer.app.domain.usecase.LibraryWorkType
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
 import com.musicplayer.app.ui.i18n.ThemeModeTitle
 import com.musicplayer.app.ui.i18n.ThemeStyleTitle
@@ -150,6 +156,7 @@ fun AppearanceSettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
     SettingsPage(
         title = strings.theme,
         onBack = onBack,
@@ -188,12 +195,50 @@ fun AppearanceSettingsScreen(
                         )
                     }
                 }
+                Text(
+                    text = extra.staticThemes,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(ThemeStyle.values()) { style ->
+                    items(
+                        listOf(
+                            ThemeStyle.CLASSIC,
+                            ThemeStyle.OCEAN,
+                            ThemeStyle.FOREST,
+                            ThemeStyle.ROSE,
+                            ThemeStyle.TWILIGHT_PURPLE,
+                            ThemeStyle.MONO
+                        )
+                    ) { style ->
                         FilterChip(
                             selected = state.themeStyle == style,
                             onClick = { viewModel.setThemeStyle(style) },
-                            label = { Text(ThemeStyleTitle(style, strings)) }
+                            label = { Text(ThemeStyleTitle(style, strings, extra)) }
+                        )
+                    }
+                }
+                Text(
+                    text = extra.dynamicThemes,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(
+                        listOf(
+                            ThemeStyle.IMMERSIVE,
+                            ThemeStyle.PANDA,
+                            ThemeStyle.CYBERPUNK,
+                            ThemeStyle.SAKURA,
+                            ThemeStyle.AURORA,
+                            ThemeStyle.SUNSET,
+                            ThemeStyle.LAVA
+                        )
+                    ) { style ->
+                        FilterChip(
+                            selected = state.themeStyle == style,
+                            onClick = { viewModel.setThemeStyle(style) },
+                            label = { Text(ThemeStyleTitle(style, strings, extra)) }
                         )
                     }
                 }
@@ -236,6 +281,33 @@ fun AppearanceSettingsScreen(
                 checked = state.editorialLayout,
                 onCheckedChange = viewModel::setEditorialLayout
             )
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(text = strings.padMode, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = strings.padModeDesc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TabletLayoutMode.values().forEach { mode ->
+                        FilterChip(
+                            selected = state.tabletLayoutMode == mode,
+                            onClick = { viewModel.setTabletLayoutMode(mode) },
+                            label = {
+                                Text(
+                                    when (mode) {
+                                        TabletLayoutMode.AUTO -> strings.padModeAuto
+                                        TabletLayoutMode.ENABLED -> strings.padModeOn
+                                        TabletLayoutMode.DISABLED -> strings.padModeOff
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -722,15 +794,32 @@ private fun SettingsPage(
     modifier: Modifier = Modifier,
     content: LazyListScope.() -> Unit
 ) {
-    LazyColumn(
+    val isPadLayout = LocalPadLayout.current
+    Box(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        contentAlignment = Alignment.TopCenter
     ) {
-        item {
-            SettingsTopBar(title = title, onBack = onBack)
+        LazyColumn(
+            modifier = if (isPadLayout) {
+                Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 860.dp)
+            } else {
+                Modifier.fillMaxSize()
+            },
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                end = 20.dp,
+                top = 8.dp,
+                bottom = 20.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            item {
+                SettingsTopBar(title = title, onBack = onBack)
+            }
+            content()
         }
-        content()
     }
 }
 

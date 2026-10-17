@@ -164,11 +164,12 @@ class MusicRepositoryImpl @Inject constructor(
     override suspend fun refreshMetadata(
         songId: String,
         provider: MetadataProvider,
-        rebuildLibraryArtwork: Boolean
+        rebuildLibraryArtwork: Boolean,
+        forceRefresh: Boolean
     ): Song? {
         val current = songDao.getSong(songId)?.toDomain() ?: return null
         val mode = current.missingScrapeMode() ?: return current
-        val enriched = metadataScraper.enrich(current, provider)
+        val enriched = metadataScraper.enrich(current, provider, forceRefresh)
         return saveScrapedMetadata(
             song = enriched,
             mode = mode,

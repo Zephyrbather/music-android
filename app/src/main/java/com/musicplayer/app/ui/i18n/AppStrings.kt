@@ -22,6 +22,7 @@ data class AppStrings(
     val musicLibrary: String,
     val localAndWebDav: String,
     val playFeature: String,
+    val heroPicks: String,
     val songs: String,
     val artists: String,
     val addFavorite: String,
@@ -88,6 +89,11 @@ data class AppStrings(
     val dynamicColorDesc: String,
     val editorialLayout: String,
     val editorialLayoutDesc: String,
+    val padMode: String,
+    val padModeDesc: String,
+    val padModeAuto: String,
+    val padModeOn: String,
+    val padModeOff: String,
     val localLibrary: String,
     val autoScan: String,
     val autoScanDesc: String,
@@ -248,6 +254,7 @@ data class AppStrings(
     val missingData: String,
     val syncedLyrics: String,
     val plainLyrics: String,
+    val noLyrics: String,
     val searchAll: String,
     val searchLyricsOnly: String,
     val searchArtworkOnly: String,
@@ -256,7 +263,91 @@ data class AppStrings(
     val saveArtworkOnly: String
 )
 
+data class KaraokeStrings(
+    val mode: String,
+    val getReady: String,
+    val startRecording: String,
+    val stopRecording: String,
+    val recording: String,
+    val energy: String,
+    val hint: String,
+    val micDenied: String,
+    val saved: String,
+    val scoring: String,
+    val score: String,
+    val recordings: String,
+    val noRecordings: String,
+    val delete: String,
+    val deleteConfirm: String,
+    val play: String,
+    val pause: String,
+    val scoreResult: String,
+    val done: String
+)
+
+// Kept out of AppStrings to stay clear of the DEX constructor limit.
+data class ExtraStrings(
+    val tags: String,
+    val allTags: String,
+    val noTags: String,
+    val noTaggedSongs: String,
+    val addTag: String,
+    val tagInputHint: String,
+    val generateTagsWithAi: String,
+    val tagsGenerating: String,
+    val tagsUnavailable: String,
+    val tagsFailed: String,
+    val save: String,
+    val recommendedPlaylists: String,
+    val refreshRecommendations: String,
+    val recommendedForYou: String,
+    val recentlyPlayedMix: String,
+    val tagMixFormat: String,
+    val newArrivalsMix: String,
+    val recommendationsHint: String,
+    val playAll: String,
+    val recommendedUpdatedFormat: String,
+    val listeningStats: String,
+    val listeningStatsEntryDesc: String,
+    val totalListening: String,
+    val activeDays: String,
+    val listeningCalendar: String,
+    val listeningCurve: String,
+    val last30Days: String,
+    val noListeningData: String,
+    val today: String,
+    val selectedDayFormat: String,
+    val dayCountFormat: String,
+    val songsCountFormat: String,
+    val tagPlanetTitle: String,
+    val tagPlanetHint: String,
+    val tagPlanetCountFormat: String,
+    val backToPlanet: String,
+    val dailyLyric: String,
+    val dailyLyricHint: String,
+    val pandaTheme: String,
+    val cyberpunkTheme: String,
+    val sakuraTheme: String,
+    val staticThemes: String,
+    val dynamicThemes: String,
+    val lyricOffset: String,
+    val lyricOffsetReset: String,
+    val newTag: String,
+    val addSongsToTag: String,
+    val deleteTag: String,
+    val deleteTagConfirmFormat: String,
+    val tagNameLabel: String,
+    val searchSongs: String,
+    val selectedCountFormat: String,
+    val noMatchingSongs: String,
+    val auroraTheme: String,
+    val sunsetTheme: String,
+    val lavaTheme: String
+)
+
 val LocalStrings = staticCompositionLocalOf { chineseStrings }
+val LocalKaraokeStrings = staticCompositionLocalOf { chineseKaraokeStrings }
+val LocalExtraStrings = staticCompositionLocalOf { chineseExtraStrings }
 
 @Composable
 fun ProvideLocalizedStrings(
@@ -267,6 +358,14 @@ fun ProvideLocalizedStrings(
         LocalStrings provides when (language) {
             AppLanguage.CHINESE -> chineseStrings
             AppLanguage.ENGLISH -> englishStrings
+        },
+        LocalKaraokeStrings provides when (language) {
+            AppLanguage.CHINESE -> chineseKaraokeStrings
+            AppLanguage.ENGLISH -> englishKaraokeStrings
+        },
+        LocalExtraStrings provides when (language) {
+            AppLanguage.CHINESE -> chineseExtraStrings
+            AppLanguage.ENGLISH -> englishExtraStrings
         },
         content = content
     )
@@ -280,7 +379,7 @@ fun ThemeModeTitle(mode: com.musicplayer.app.domain.repository.ThemeMode, string
     }
 }
 
-fun ThemeStyleTitle(style: ThemeStyle, strings: AppStrings): String {
+fun ThemeStyleTitle(style: ThemeStyle, strings: AppStrings, extra: ExtraStrings): String {
     return when (style) {
         ThemeStyle.CLASSIC -> strings.classicTheme
         ThemeStyle.OCEAN -> strings.oceanTheme
@@ -289,6 +388,12 @@ fun ThemeStyleTitle(style: ThemeStyle, strings: AppStrings): String {
         ThemeStyle.TWILIGHT_PURPLE -> strings.twilightPurpleTheme
         ThemeStyle.MONO -> strings.monoTheme
         ThemeStyle.IMMERSIVE -> strings.immersiveTheme
+        ThemeStyle.PANDA -> extra.pandaTheme
+        ThemeStyle.CYBERPUNK -> extra.cyberpunkTheme
+        ThemeStyle.SAKURA -> extra.sakuraTheme
+        ThemeStyle.AURORA -> extra.auroraTheme
+        ThemeStyle.SUNSET -> extra.sunsetTheme
+        ThemeStyle.LAVA -> extra.lavaTheme
     }
 }
 
@@ -308,6 +413,7 @@ private val chineseStrings = AppStrings(
     musicLibrary = "音乐库",
     localAndWebDav = "本地文件与 WebDAV 音乐统一播放",
     playFeature = "播放推荐",
+    heroPicks = "今日精选",
     songs = "歌曲",
     artists = "艺术家",
     addFavorite = "加入收藏",
@@ -374,6 +480,11 @@ private val chineseStrings = AppStrings(
     dynamicColorDesc = "在 Android 12 及以上跟随系统取色。",
     editorialLayout = "杂志式布局",
     editorialLayoutDesc = "首页使用更大的专辑与推荐区块。",
+    padMode = "平板模式",
+    padModeDesc = "为平板优化导航与页面布局，播放页采用封面与歌词双栏显示。",
+    padModeAuto = "自动",
+    padModeOn = "开启",
+    padModeOff = "关闭",
     localLibrary = "本地曲库",
     autoScan = "自动扫描本地音乐",
     autoScanDesc = "启动后自动刷新媒体库和已授权文件夹。",
@@ -534,12 +645,94 @@ private val chineseStrings = AppStrings(
     missingData = "暂无",
     syncedLyrics = "时间轴歌词",
     plainLyrics = "普通歌词",
+    noLyrics = "暂无歌词",
     searchAll = "全部",
     searchLyricsOnly = "只搜歌词",
     searchArtworkOnly = "只搜封面",
     saveAllMetadata = "保存全部信息",
     saveLyricsOnly = "只保存歌词",
     saveArtworkOnly = "只保存封面"
+)
+
+private val chineseKaraokeStrings = KaraokeStrings(
+    mode = "K歌模式",
+    getReady = "准备开唱",
+    startRecording = "开始录音",
+    stopRecording = "结束录音",
+    recording = "录音中",
+    energy = "演唱能量",
+    hint = "戴上耳机效果更好，录音只会采集你的麦克风",
+    micDenied = "需要麦克风权限才能录制演唱",
+    saved = "演唱已保存",
+    scoring = "评分",
+    score = "得分",
+    recordings = "演唱记录",
+    noRecordings = "还没有演唱录音",
+    delete = "删除",
+    deleteConfirm = "删除这段录音？",
+    play = "播放",
+    pause = "暂停",
+    scoreResult = "本次演唱评分",
+    done = "知道了"
+)
+
+private val chineseExtraStrings = ExtraStrings(
+    tags = "标签",
+    allTags = "全部标签",
+    noTags = "还没有标签",
+    noTaggedSongs = "该标签下还没有歌曲",
+    addTag = "添加标签",
+    tagInputHint = "输入标签后点击 + 添加",
+    generateTagsWithAi = "AI 生成标签",
+    tagsGenerating = "正在生成标签…",
+    tagsUnavailable = "请先在设置中开启 AI 语义标签并填写 API Key",
+    tagsFailed = "标签生成失败，请稍后重试",
+    save = "保存",
+    recommendedPlaylists = "推荐歌单",
+    refreshRecommendations = "刷新推荐",
+    recommendedForYou = "为你推荐",
+    recentlyPlayedMix = "最近常听",
+    tagMixFormat = "标签精选 · %s",
+    newArrivalsMix = "新歌速递",
+    recommendationsHint = "根据你的听歌记录与歌曲标签生成",
+    playAll = "播放全部",
+    recommendedUpdatedFormat = "更新于 %s",
+    listeningStats = "听歌排行",
+    listeningStatsEntryDesc = "排行、听歌日历与时长曲线",
+    totalListening = "累计时长",
+    activeDays = "活跃天数",
+    listeningCalendar = "听歌日历",
+    listeningCurve = "近 30 天时长",
+    last30Days = "近 30 天",
+    noListeningData = "还没有听歌数据",
+    today = "今天",
+    selectedDayFormat = "%s · %s",
+    dayCountFormat = "%d 天",
+    songsCountFormat = "%d 首",
+    tagPlanetTitle = "标签星球",
+    tagPlanetHint = "拖动旋转星球 · 点击标签查看歌曲",
+    tagPlanetCountFormat = "%d 个标签 · %d 首歌曲",
+    backToPlanet = "返回星球",
+    dailyLyric = "每日歌词",
+    dailyLyricHint = "点击播放这首歌",
+    pandaTheme = "熊猫",
+    cyberpunkTheme = "赛博朋克",
+    sakuraTheme = "樱花",
+    staticThemes = "静态主题",
+    dynamicThemes = "动态主题",
+    lyricOffset = "歌词偏移",
+    lyricOffsetReset = "重置",
+    newTag = "新建标签",
+    addSongsToTag = "添加歌曲",
+    deleteTag = "删除标签",
+    deleteTagConfirmFormat = "从所有歌曲中移除 #%s？",
+    tagNameLabel = "标签名称",
+    searchSongs = "搜索歌曲",
+    selectedCountFormat = "已选 %d 首",
+    noMatchingSongs = "没有匹配的歌曲",
+    auroraTheme = "极光",
+    sunsetTheme = "落日",
+    lavaTheme = "熔岩"
 )
 
 private val englishStrings = AppStrings(
@@ -558,6 +751,7 @@ private val englishStrings = AppStrings(
     musicLibrary = "Music Library",
     localAndWebDav = "Local files and WebDAV libraries in one queue",
     playFeature = "Play feature",
+    heroPicks = "Today's picks",
     songs = "Songs",
     artists = "Artists",
     addFavorite = "Add favorite",
@@ -624,6 +818,11 @@ private val englishStrings = AppStrings(
     dynamicColorDesc = "Follow Android 12+ system color when available.",
     editorialLayout = "Editorial layout",
     editorialLayoutDesc = "Use larger album-led sections on the home screen.",
+    padMode = "Tablet mode",
+    padModeDesc = "Optimized navigation and layouts for tablets, with a side-by-side player and lyrics view.",
+    padModeAuto = "Auto",
+    padModeOn = "On",
+    padModeOff = "Off",
     localLibrary = "Local library",
     autoScan = "Auto scan local music",
     autoScanDesc = "Refresh the media library and selected folders on startup.",
@@ -784,10 +983,92 @@ private val englishStrings = AppStrings(
     missingData = "Missing",
     syncedLyrics = "Synced lyrics",
     plainLyrics = "Plain lyrics",
+    noLyrics = "No lyrics available",
     searchAll = "All",
     searchLyricsOnly = "Lyrics only",
     searchArtworkOnly = "Artwork only",
     saveAllMetadata = "Save all metadata",
     saveLyricsOnly = "Save lyrics only",
     saveArtworkOnly = "Save artwork only"
+)
+
+private val englishKaraokeStrings = KaraokeStrings(
+    mode = "Karaoke",
+    getReady = "Get ready",
+    startRecording = "Start recording",
+    stopRecording = "Stop recording",
+    recording = "Recording",
+    energy = "Vocal energy",
+    hint = "Headphones sound better; only your microphone is recorded",
+    micDenied = "Microphone permission is required to record",
+    saved = "Recording saved",
+    scoring = "Scoring",
+    score = "Score",
+    recordings = "Recordings",
+    noRecordings = "No recordings yet",
+    delete = "Delete",
+    deleteConfirm = "Delete this recording?",
+    play = "Play",
+    pause = "Pause",
+    scoreResult = "Your karaoke score",
+    done = "Done"
+)
+
+private val englishExtraStrings = ExtraStrings(
+    tags = "Tags",
+    allTags = "All tags",
+    noTags = "No tags yet",
+    noTaggedSongs = "No songs with this tag",
+    addTag = "Add tag",
+    tagInputHint = "Type a tag, then tap +",
+    generateTagsWithAi = "AI tags",
+    tagsGenerating = "Generating tags...",
+    tagsUnavailable = "Enable AI semantic tags and configure an API key in Settings first",
+    tagsFailed = "Tag generation failed, try again later",
+    save = "Save",
+    recommendedPlaylists = "Recommended playlists",
+    refreshRecommendations = "Refresh",
+    recommendedForYou = "For you",
+    recentlyPlayedMix = "Recently played",
+    tagMixFormat = "Tag mix · %s",
+    newArrivalsMix = "New arrivals",
+    recommendationsHint = "Generated from your listening history and song tags",
+    playAll = "Play all",
+    recommendedUpdatedFormat = "Updated %s",
+    listeningStats = "Listening stats",
+    listeningStatsEntryDesc = "Rankings, listening calendar and duration curve",
+    totalListening = "Total time",
+    activeDays = "Active days",
+    listeningCalendar = "Listening calendar",
+    listeningCurve = "Last 30 days",
+    last30Days = "Last 30 days",
+    noListeningData = "No listening data yet",
+    today = "Today",
+    selectedDayFormat = "%s · %s",
+    dayCountFormat = "%d days",
+    songsCountFormat = "%d songs",
+    tagPlanetTitle = "Tag planet",
+    tagPlanetHint = "Drag to spin · tap a tag to browse",
+    tagPlanetCountFormat = "%d tags · %d songs",
+    backToPlanet = "Back to planet",
+    dailyLyric = "Daily lyric",
+    dailyLyricHint = "Tap to play this song",
+    pandaTheme = "Panda",
+    cyberpunkTheme = "Cyberpunk",
+    sakuraTheme = "Sakura",
+    staticThemes = "Static themes",
+    dynamicThemes = "Dynamic themes",
+    lyricOffset = "Lyric offset",
+    lyricOffsetReset = "Reset",
+    newTag = "New tag",
+    addSongsToTag = "Add songs",
+    deleteTag = "Delete tag",
+    deleteTagConfirmFormat = "Remove #%s from all songs?",
+    tagNameLabel = "Tag name",
+    searchSongs = "Search songs",
+    selectedCountFormat = "%d selected",
+    noMatchingSongs = "No matching songs",
+    auroraTheme = "Aurora",
+    sunsetTheme = "Sunset",
+    lavaTheme = "Lava"
 )

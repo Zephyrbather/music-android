@@ -11,6 +11,7 @@ class FetchMetadataUseCase @Inject constructor(
     suspend operator fun invoke(
         songId: String,
         provider: MetadataProvider = MetadataProvider.AUTO,
-        rebuildLibraryArtwork: Boolean = true
-    ): Song? = musicRepository.refreshMetadata(songId, provider, rebuildLibraryArtwork)
+        rebuildLibraryArtwork: Boolean = true,
+        forceRefresh: Boolean = false
+    ): Song? = musicRepository.refreshMetadata(songId, provider, rebuildLibraryArtwork, forceRefresh)
 }

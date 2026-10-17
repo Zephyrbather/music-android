@@ -1,5 +1,14 @@
 package com.musicplayer.app.ui.player
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,9 +39,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.QueueMusic
@@ -42,11 +55,14 @@ import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -54,11 +70,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,6 +90,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
@@ -84,6 +104,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.musicplayer.app.data.karaoke.KaraokeRecorder
+import com.musicplayer.app.data.karaoke.KaraokeRecording
+import com.musicplayer.app.data.karaoke.KaraokeRecordingStore
 import com.musicplayer.app.data.local.entity.CommentEntity
 import com.musicplayer.app.domain.model.ArtworkCandidate
 import com.musicplayer.app.domain.model.LyricsCandidate
@@ -92,12 +115,20 @@ import com.musicplayer.app.domain.model.ScrapeCandidates
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.components.SongArtwork
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
+import com.musicplayer.app.ui.i18n.LocalKaraokeStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
+import androidx.core.content.ContextCompat
+import java.io.File
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 fun NowPlayingScreen(
     playbackState: PlaybackState,
+    onClose: () -> Unit = {},
     onSkipPrevious: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
@@ -106,6 +137,9 @@ fun NowPlayingScreen(
     onPlaybackModeChange: (PlaybackMode) -> Unit,
     desktopLyricsEnabled: Boolean = false,
     onToggleDesktopLyrics: () -> Unit = {},
+    lyricOffsetMs: Long = 0L,
+    onAdjustLyricOffset: (Long) -> Unit = {},
+    onResetLyricOffset: () -> Unit = {},
     onOpenEqualizer: () -> Unit = {},
     onOpenScrapeDetail: () -> Unit = {},
     showCommentDialog: Boolean = false,
@@ -124,6 +158,19 @@ fun NowPlayingScreen(
     val song = playbackState.currentSong
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var lyricsMode by rememberSaveable(song?.id) { mutableStateOf(false) }
+    var karaokeMode by rememberSaveable(song?.id) { mutableStateOf(false) }
+
+    if (karaokeMode) {
+        KaraokeMode(
+            playbackState = playbackState,
+            onSkipPrevious = onSkipPrevious,
+            onTogglePlayPause = onTogglePlayPause,
+            onSkipNext = onSkipNext,
+            onExit = { karaokeMode = false },
+            modifier = modifier
+        )
+        return
+    }
 
     if (lyricsMode) {
         LyricsMode(
@@ -134,6 +181,9 @@ fun NowPlayingScreen(
             onSkipNext = onSkipNext,
             desktopLyricsEnabled = desktopLyricsEnabled,
             onToggleDesktopLyrics = onToggleDesktopLyrics,
+            lyricOffsetMs = lyricOffsetMs,
+            onAdjustLyricOffset = onAdjustLyricOffset,
+            onResetLyricOffset = onResetLyricOffset,
             onPlaybackModeChange = onPlaybackModeChange,
             onExit = { lyricsMode = false },
             modifier = modifier
@@ -141,6 +191,26 @@ fun NowPlayingScreen(
         return
     }
 
+    if (LocalPadLayout.current) {
+        PadNowPlayingContent(
+            playbackState = playbackState,
+            onClose = onClose,
+            onSkipPrevious = onSkipPrevious,
+            onTogglePlayPause = onTogglePlayPause,
+            onSkipNext = onSkipNext,
+            onSeekTo = onSeekTo,
+            onPlaybackModeChange = onPlaybackModeChange,
+            onScrapeClick = onOpenScrapeDetail,
+            onEqualizerClick = onOpenEqualizer,
+            onQueueClick = { showQueue = true },
+            onCommentsClick = onOpenComments,
+            onKaraokeClick = { karaokeMode = true },
+            lyricOffsetMs = lyricOffsetMs,
+            onAdjustLyricOffset = onAdjustLyricOffset,
+            onResetLyricOffset = onResetLyricOffset,
+            modifier = modifier
+        )
+    } else {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -223,7 +293,14 @@ fun NowPlayingScreen(
         LyricsPreview(
             lyrics = song?.lyrics,
             positionMs = playbackState.positionMs,
+            lyricOffsetMs = lyricOffsetMs,
             modifier = Modifier.padding(vertical = 12.dp)
+        )
+        LyricOffsetControls(
+            offsetMs = lyricOffsetMs,
+            enabled = song != null,
+            onAdjust = onAdjustLyricOffset,
+            onReset = onResetLyricOffset
         )
         Spacer(modifier = Modifier.weight(0.1f))
         PanelButtonRow(
@@ -241,7 +318,8 @@ fun NowPlayingScreen(
             },
             onEqualizerClick = onOpenEqualizer,
             onQueueClick = { showQueue = true },
-            onCommentsClick = onOpenComments
+            onCommentsClick = onOpenComments,
+            onKaraokeClick = { karaokeMode = true }
         )
         PlaybackProgress(
             positionMs = playbackState.positionMs,
@@ -257,6 +335,7 @@ fun NowPlayingScreen(
             onTogglePlayPause = onTogglePlayPause,
             onSkipNext = onSkipNext
         )
+    }
     }
 
     if (showQueue) {
@@ -284,6 +363,241 @@ fun NowPlayingScreen(
             onApply = onApplyCandidateResult,
             onDismiss = onDismissCandidatePicker
         )
+    }
+}
+
+@Composable
+private fun PadNowPlayingContent(
+    playbackState: PlaybackState,
+    onClose: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    onSeekTo: (Long) -> Unit,
+    onPlaybackModeChange: (PlaybackMode) -> Unit,
+    onScrapeClick: () -> Unit,
+    onEqualizerClick: () -> Unit,
+    onQueueClick: () -> Unit,
+    onCommentsClick: () -> Unit,
+    onKaraokeClick: () -> Unit,
+    lyricOffsetMs: Long,
+    onAdjustLyricOffset: (Long) -> Unit,
+    onResetLyricOffset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    val song = playbackState.currentSong
+    Box(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp, vertical = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(36.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                AlbumArtwork(song = song, onClick = {})
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp, bottom = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = song?.title ?: strings.nothingPlaying,
+                        style = MaterialTheme.typography.headlineSmall,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = song?.let { "${it.artistName} - ${it.albumTitle}" } ?: strings.chooseSong,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    song?.let { s ->
+                        val parts = buildList {
+                            s.categoryTag?.takeIf { it.isNotBlank() }?.let { add("${strings.songCategory}: $it") }
+                            s.qualityLabel.takeIf { it.isNotBlank() && it != "Unknown" }?.let { add(it) }
+                            s.releaseYear?.takeIf { it > 0 }?.let { add(it.toString()) }
+                        }
+                        if (parts.isNotEmpty()) {
+                            Text(
+                                text = parts.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    playbackState.errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                PanelButtonRow(
+                    enabled = song != null,
+                    hasQueue = playbackState.queue.isNotEmpty(),
+                    playbackMode = playbackState.playbackMode,
+                    onScrapeClick = onScrapeClick,
+                    onModeClick = {
+                        val nextMode = playbackState.playbackMode.nextMode()
+                        onPlaybackModeChange(nextMode)
+                    },
+                    onEqualizerClick = onEqualizerClick,
+                    onQueueClick = onQueueClick,
+                    onCommentsClick = onCommentsClick,
+                    onKaraokeClick = onKaraokeClick
+                )
+                PlaybackProgress(
+                    positionMs = playbackState.positionMs,
+                    durationMs = playbackState.durationMs,
+                    enabled = song != null,
+                    onSeekTo = onSeekTo,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                PlayerTransport(
+                    enabled = song != null,
+                    isPlaying = playbackState.isPlaying,
+                    onSkipPrevious = onSkipPrevious,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onSkipNext = onSkipNext
+                )
+            }
+            PadLyricsPanel(
+                song = song,
+                positionMs = playbackState.positionMs,
+                onSeekTo = onSeekTo,
+                lyricOffsetMs = lyricOffsetMs,
+                onAdjustLyricOffset = onAdjustLyricOffset,
+                onResetLyricOffset = onResetLyricOffset,
+                modifier = Modifier
+                    .weight(0.9f)
+                    .fillMaxHeight()
+            )
+        }
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 8.dp, end = 10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ArrowDownward,
+                contentDescription = strings.close
+            )
+        }
+    }
+}
+
+@Composable
+private fun PadLyricsPanel(
+    song: Song?,
+    positionMs: Long,
+    onSeekTo: (Long) -> Unit,
+    lyricOffsetMs: Long,
+    onAdjustLyricOffset: (Long) -> Unit,
+    onResetLyricOffset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    val timedLines = remember(song?.lyrics) { parseTimedLyrics(song?.lyrics) }
+    val currentIndex = remember(timedLines, positionMs, lyricOffsetMs) {
+        timedLines.findCurrentLyricIndex(positionMs - lyricOffsetMs)
+    }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(currentIndex, timedLines.size) {
+        if (timedLines.isNotEmpty()) {
+            listState.animateScrollToItem(currentIndex.coerceIn(0, timedLines.lastIndex))
+        }
+    }
+
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = Color.Transparent
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            LyricOffsetControls(
+                offsetMs = lyricOffsetMs,
+                enabled = song != null,
+                onAdjust = onAdjustLyricOffset,
+                onReset = onResetLyricOffset,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+            )
+            when {
+                timedLines.isNotEmpty() -> {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        itemsIndexed(timedLines, key = { index, _ -> index }) { index, line ->
+                            val isCurrent = index == currentIndex
+                            Text(
+                                text = line.text,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSeekTo((line.timeMs + lyricOffsetMs).coerceAtLeast(0L)) }
+                            )
+                        }
+                    }
+                }
+
+                !song?.lyrics.isNullOrBlank() -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = song?.lyrics.orEmpty(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = strings.noLyrics,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -387,9 +701,11 @@ private fun PanelButtonRow(
     onModeClick: () -> Unit,
     onEqualizerClick: () -> Unit,
     onQueueClick: () -> Unit,
-    onCommentsClick: () -> Unit = {}
+    onCommentsClick: () -> Unit = {},
+    onKaraokeClick: () -> Unit = {}
 ) {
     val strings = LocalStrings.current
+    val karaokeStrings = LocalKaraokeStrings.current
     val modeTint = MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = Modifier
@@ -420,6 +736,13 @@ private fun PanelButtonRow(
             onClick = onEqualizerClick
         ) {
             Icon(Icons.Outlined.GraphicEq, contentDescription = strings.equalizer)
+        }
+        IconButton(
+            onClick = onKaraokeClick,
+            enabled = enabled,
+            modifier = Modifier.size(44.dp)
+        ) {
+            Icon(Icons.Outlined.Mic, contentDescription = karaokeStrings.mode)
         }
         IconButton(
             onClick = onCommentsClick,
@@ -969,6 +1292,9 @@ private fun LyricsMode(
     onSkipNext: () -> Unit,
     desktopLyricsEnabled: Boolean,
     onToggleDesktopLyrics: () -> Unit,
+    lyricOffsetMs: Long,
+    onAdjustLyricOffset: (Long) -> Unit,
+    onResetLyricOffset: () -> Unit,
     onPlaybackModeChange: (PlaybackMode) -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier
@@ -978,8 +1304,8 @@ private fun LyricsMode(
     val timedLines = remember(song?.lyrics) { parseTimedLyrics(song?.lyrics) }
     val positionMs = playbackState.positionMs
 
-    val currentIndex = remember(timedLines, positionMs) {
-        timedLines.findCurrentLyricIndex(positionMs)
+    val currentIndex = remember(timedLines, positionMs, lyricOffsetMs) {
+        timedLines.findCurrentLyricIndex(positionMs - lyricOffsetMs)
     }
     val listState = rememberLazyListState()
 
@@ -1005,6 +1331,12 @@ private fun LyricsMode(
             ImmersiveLyricsHeader(
                 song = song,
                 modifier = Modifier.fillMaxWidth()
+            )
+            LyricOffsetControls(
+                offsetMs = lyricOffsetMs,
+                enabled = song != null,
+                onAdjust = onAdjustLyricOffset,
+                onReset = onResetLyricOffset
             )
             Box(
                 modifier = Modifier
@@ -1046,9 +1378,11 @@ private fun LyricsMode(
                                 color = if (isCurrent) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.pointerInput(line.timeMs) {
+                                modifier = Modifier.pointerInput(line.timeMs, lyricOffsetMs) {
                                     detectTapGestures(
-                                        onDoubleTap = { onSeekTo(line.timeMs) }
+                                        onDoubleTap = {
+                                            onSeekTo((line.timeMs + lyricOffsetMs).coerceAtLeast(0L))
+                                        }
                                     )
                                 }
                             )
@@ -1386,17 +1720,87 @@ private fun parseTimedLyrics(lyrics: String?): List<LyricLine> {
         .toList()
 }
 
+private const val LYRIC_OFFSET_STEP_MS = 500L
+
+private fun formatLyricOffset(offsetMs: Long): String {
+    if (offsetMs == 0L) return "0.0s"
+    val seconds = offsetMs / 1000.0
+    return if (offsetMs > 0) "+%.1fs".format(seconds) else "%.1fs".format(seconds)
+}
+
+@Composable
+private fun LyricOffsetControls(
+    offsetMs: Long,
+    enabled: Boolean,
+    onAdjust: (Long) -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val extra = LocalExtraStrings.current
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = extra.lyricOffset,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        IconButton(
+            onClick = { onAdjust(-LYRIC_OFFSET_STEP_MS) },
+            enabled = enabled && offsetMs > -10_000L,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Remove,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Text(
+            text = formatLyricOffset(offsetMs),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (offsetMs == 0L) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(min = 52.dp)
+        )
+        IconButton(
+            onClick = { onAdjust(LYRIC_OFFSET_STEP_MS) },
+            enabled = enabled && offsetMs < 10_000L,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Add,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        if (offsetMs != 0L) {
+            TextButton(
+                onClick = onReset,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                Text(text = extra.lyricOffsetReset, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
 @Composable
 private fun LyricsPreview(
     lyrics: String?,
     positionMs: Long,
+    lyricOffsetMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     val timedLines = remember(lyrics) { parseTimedLyrics(lyrics) }
     if (timedLines.isEmpty()) return
 
-    val currentIndex = remember(timedLines, positionMs) {
-        timedLines.findCurrentLyricIndex(positionMs)
+    val currentIndex = remember(timedLines, positionMs, lyricOffsetMs) {
+        timedLines.findCurrentLyricIndex(positionMs - lyricOffsetMs)
     }
     val currentLine = timedLines.getOrNull(currentIndex)
     val nextLine = timedLines.getOrNull(currentIndex + 1)
@@ -1429,6 +1833,616 @@ private fun LyricsPreview(
         }
     }
 }
+
+@Composable
+private fun KaraokeMode(
+    playbackState: PlaybackState,
+    onSkipPrevious: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    onExit: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    val karaokeStrings = LocalKaraokeStrings.current
+    val context = LocalContext.current
+    val song = playbackState.currentSong
+    val recorder = remember { KaraokeRecorder(context.applicationContext) }
+    val timedLines = remember(song?.lyrics) { parseTimedLyrics(song?.lyrics) }
+    val currentIndex = remember(timedLines, playbackState.positionMs) {
+        timedLines.findCurrentLyricIndex(playbackState.positionMs)
+    }
+    val currentLine = timedLines.getOrNull(currentIndex)
+    val previousLine = timedLines.getOrNull(currentIndex - 1)
+    val nextLine = timedLines.getOrNull(currentIndex + 1)
+
+    var recording by remember { mutableStateOf(false) }
+    var countdown by remember { mutableStateOf<Int?>(null) }
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var energy by remember { mutableFloatStateOf(0f) }
+    var elapsedMs by remember { mutableLongStateOf(0L) }
+    var savedFile by remember { mutableStateOf<File?>(null) }
+    var scoringEnabled by rememberSaveable { mutableStateOf(true) }
+    var showRecordings by remember { mutableStateOf(false) }
+    var recordings by remember { mutableStateOf<List<KaraokeRecording>>(emptyList()) }
+    var lastScore by remember { mutableStateOf<Int?>(null) }
+    var showScoreDialog by remember { mutableStateOf(false) }
+    val energySamples = remember { mutableListOf<Float>() }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasPermission = granted
+        permissionDenied = !granted
+        if (granted) countdown = 3
+    }
+
+    fun finishRecording(showResult: Boolean = false) {
+        val wasRecording = recorder.isRecording
+        val file = recorder.stop()
+        recording = false
+        energy = 0f
+        if (wasRecording && file != null) {
+            val score = if (scoringEnabled && energySamples.isNotEmpty()) {
+                computeKaraokeScore(energySamples)
+            } else {
+                null
+            }
+            KaraokeRecordingStore.add(
+                context,
+                KaraokeRecording(
+                    fileName = file.name,
+                    title = song?.title.orEmpty(),
+                    artist = song?.artistName.orEmpty(),
+                    createdAt = System.currentTimeMillis(),
+                    durationMs = elapsedMs,
+                    score = score
+                )
+            )
+            lastScore = score
+            showScoreDialog = showResult && score != null
+        }
+        savedFile = file
+        energySamples.clear()
+    }
+
+    fun handleExit() {
+        finishRecording()
+        onExit()
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { finishRecording() }
+    }
+
+    LaunchedEffect(song?.id) {
+        if (recording) finishRecording()
+    }
+
+    LaunchedEffect(countdown) {
+        val value = countdown ?: return@LaunchedEffect
+        if (value > 0) {
+            delay(700)
+            countdown = value - 1
+        } else {
+            countdown = null
+            savedFile = null
+            lastScore = null
+            showScoreDialog = false
+            energySamples.clear()
+            val file = recorder.start(song?.title.orEmpty(), song?.artistName.orEmpty())
+            recording = file != null
+            if (file == null) permissionDenied = true
+            elapsedMs = 0L
+            energy = 0f
+        }
+    }
+
+    LaunchedEffect(showRecordings) {
+        if (showRecordings) recordings = KaraokeRecordingStore.load(context)
+    }
+
+    LaunchedEffect(recording) {
+        while (recording) {
+            energy = (energy * 0.55f + recorder.amplitude() * 0.45f).coerceIn(0f, 1f)
+            if (scoringEnabled) energySamples.add(energy)
+            delay(70)
+        }
+    }
+
+    LaunchedEffect(recording) {
+        val startedAt = System.currentTimeMillis()
+        while (recording) {
+            elapsedMs = System.currentTimeMillis() - startedAt
+            delay(125)
+        }
+    }
+
+    val lineProgress = remember(currentLine, nextLine, playbackState.positionMs) {
+        val start = currentLine?.timeMs ?: 0L
+        val end = nextLine?.timeMs ?: (start + 4_000L)
+        if (end > start) {
+            ((playbackState.positionMs - start).toFloat() / (end - start).toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(karaokeBackgroundBrush())
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        if (!song?.artworkUri.isNullOrBlank()) {
+            AsyncImage(
+                model = song?.artworkUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alpha = 0.28f,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.background.copy(alpha = 0.42f),
+                            MaterialTheme.colorScheme.background.copy(alpha = 0.74f)
+                        )
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 28.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                IconButton(onClick = ::handleExit) {
+                    Icon(Icons.Outlined.Close, contentDescription = strings.close)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = song?.title ?: strings.nothingPlaying,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = song?.artistName ?: strings.chooseSong,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilterChip(
+                    selected = scoringEnabled,
+                    onClick = { scoringEnabled = !scoringEnabled },
+                    enabled = !recording && countdown == null,
+                    label = { Text(karaokeStrings.scoring) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Star,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                )
+                IconButton(
+                    onClick = { showRecordings = true },
+                    enabled = !recording && countdown == null
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.QueueMusic,
+                        contentDescription = karaokeStrings.recordings
+                    )
+                }
+                if (recording) {
+                    KaraokeRecordingBadge(elapsedMs = elapsedMs)
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    timedLines.isNotEmpty() -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(24.dp)
+                        ) {
+                            Text(
+                                text = previousLine?.text.orEmpty(),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Text(
+                                    text = currentLine?.text.orEmpty(),
+                                    style = MaterialTheme.typography.displaySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                LinearProgressIndicator(
+                                    progress = { lineProgress },
+                                    modifier = Modifier
+                                        .width(220.dp)
+                                        .height(4.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                )
+                            }
+                            Text(
+                                text = nextLine?.text.orEmpty(),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    !song?.lyrics.isNullOrBlank() -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.85f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            items(lyricLines(song?.lyrics)) { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Text(
+                            text = strings.noLyrics,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (countdown != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.72f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = karaokeStrings.getReady,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = (countdown ?: 0).toString(),
+                                style = MaterialTheme.typography.displayLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+            KaraokeEnergyMeter(energy = energy, active = recording)
+            Text(
+                text = when {
+                    permissionDenied -> karaokeStrings.micDenied
+                    recording -> karaokeStrings.recording
+                    savedFile != null -> buildString {
+                        append(karaokeStrings.saved)
+                        append(" · ")
+                        append(savedFile?.name)
+                        lastScore?.let { score ->
+                            append(" · ")
+                            append(karaokeStrings.score)
+                            append(" ")
+                            append(score)
+                        }
+                    }
+
+                    else -> karaokeStrings.hint
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (permissionDenied) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+            KaraokeTransport(
+                enabled = song != null,
+                isPlaying = playbackState.isPlaying,
+                isRecording = recording,
+                countingDown = countdown != null,
+                onSkipPrevious = onSkipPrevious,
+                onTogglePlayPause = onTogglePlayPause,
+                onSkipNext = onSkipNext,
+                onRecordClick = {
+                    when {
+                        recording -> finishRecording(showResult = true)
+                        countdown != null -> countdown = null
+                        !hasPermission -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        else -> {
+                            permissionDenied = false
+                            countdown = 3
+                        }
+                    }
+                }
+            )
+        }
+        if (showRecordings) {
+            KaraokeRecordingsDialog(
+                recordings = recordings,
+                onDelete = { recording ->
+                    KaraokeRecordingStore.remove(context, recording.fileName)
+                    recordings = KaraokeRecordingStore.load(context)
+                },
+                onDismiss = { showRecordings = false }
+            )
+        }
+        lastScore?.let { score ->
+            if (showScoreDialog) {
+                KaraokeScoreResultDialog(score = score, onDismiss = { showScoreDialog = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun KaraokeRecordingBadge(elapsedMs: Long) {
+    val transition = rememberInfiniteTransition(label = "karaoke-recording")
+    val dotAlpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 650),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "karaoke-recording-dot"
+    )
+    Surface(
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = MaterialTheme.colorScheme.errorContainer
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = dotAlpha), androidx.compose.foundation.shape.CircleShape)
+            )
+            Text(
+                text = formatKaraokeTime(elapsedMs),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+@Composable
+private fun KaraokeEnergyMeter(energy: Float, active: Boolean) {
+    val karaokeStrings = LocalKaraokeStrings.current
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = karaokeStrings.energy,
+            style = MaterialTheme.typography.labelMedium,
+            color = scheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Canvas(
+            modifier = Modifier
+                .width(200.dp)
+                .height(26.dp)
+        ) {
+            val barCount = 18
+            val step = size.width / barCount
+            val barWidth = step * 0.55f
+            repeat(barCount) { index ->
+                val phase = karaokeBarPhases[index % karaokeBarPhases.size]
+                val level = if (active) {
+                    (0.16f + energy * (0.5f + 0.5f * phase)).coerceIn(0.12f, 1f)
+                } else {
+                    0.12f
+                }
+                val barHeight = size.height * level
+                drawRoundRect(
+                    color = if (active) {
+                        scheme.primary.copy(alpha = 0.45f + 0.55f * energy)
+                    } else {
+                        scheme.onSurfaceVariant.copy(alpha = 0.18f)
+                    },
+                    topLeft = Offset(index * step + (step - barWidth) / 2f, size.height - barHeight),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun KaraokeTransport(
+    enabled: Boolean,
+    isPlaying: Boolean,
+    isRecording: Boolean,
+    countingDown: Boolean,
+    onSkipPrevious: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    onRecordClick: () -> Unit
+) {
+    val strings = LocalStrings.current
+    val karaokeStrings = LocalKaraokeStrings.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = onSkipPrevious,
+            enabled = enabled,
+            modifier = Modifier.size(52.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.SkipPrevious,
+                contentDescription = strings.previous,
+                modifier = Modifier.size(30.dp)
+            )
+        }
+        FilledIconButton(
+            onClick = onTogglePlayPause,
+            enabled = enabled,
+            modifier = Modifier.size(64.dp)
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                contentDescription = if (isPlaying) strings.pause else strings.play,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+        IconButton(
+            onClick = onSkipNext,
+            enabled = enabled,
+            modifier = Modifier.size(52.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.SkipNext,
+                contentDescription = strings.next,
+                modifier = Modifier.size(30.dp)
+            )
+        }
+        if (countingDown) {
+            FilledIconButton(
+                onClick = onRecordClick,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = strings.cancel,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        } else {
+            FilledIconButton(
+                onClick = onRecordClick,
+                enabled = enabled,
+                modifier = Modifier.size(64.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = if (isRecording) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    imageVector = if (isRecording) Icons.Outlined.Stop else Icons.Outlined.Mic,
+                    contentDescription = if (isRecording) karaokeStrings.stopRecording
+                    else karaokeStrings.startRecording,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun karaokeBackgroundBrush(): Brush {
+    val scheme = MaterialTheme.colorScheme
+    return Brush.linearGradient(
+        colors = listOf(
+            scheme.primaryContainer,
+            scheme.surface,
+            scheme.tertiaryContainer
+        )
+    )
+}
+
+private fun formatKaraokeTime(elapsedMs: Long): String {
+    val totalSeconds = (elapsedMs / 1000L).coerceAtLeast(0L)
+    return "%02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+}
+
+private fun computeKaraokeScore(samples: List<Float>): Int {
+    if (samples.isEmpty()) return 0
+    val threshold = 0.05f
+    val voiced = samples.filter { it >= threshold }
+    if (voiced.isEmpty()) return 0
+    val coverage = voiced.size.toFloat() / samples.size
+    val average = voiced.average().coerceIn(0.0, 1.0)
+    val peakWindow = (voiced.size / 20).coerceAtLeast(1)
+    val peak = voiced.sortedDescending().take(peakWindow).average().coerceIn(0.0, 1.0)
+    val raw = coverage * 55f +
+        (average * 2.5).coerceAtMost(1.0) * 25f +
+        (peak * 2.2).coerceAtMost(1.0) * 20f
+    return raw.roundToInt().coerceIn(0, 100)
+}
+
+private val karaokeBarPhases = floatArrayOf(
+    0.2f, 0.55f, 0.85f, 0.4f, 1f, 0.65f, 0.3f, 0.75f, 0.5f, 0.9f, 0.35f, 0.7f
+)
 
 private fun lyricLines(lyrics: String?): List<String> {
     return lyrics.orEmpty()

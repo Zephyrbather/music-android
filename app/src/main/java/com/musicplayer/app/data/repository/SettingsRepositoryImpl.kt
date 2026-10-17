@@ -17,6 +17,7 @@ import com.musicplayer.app.domain.repository.AppLanguage
 import com.musicplayer.app.domain.repository.AiProvider
 import com.musicplayer.app.domain.repository.FontFamilyOption
 import com.musicplayer.app.domain.repository.SettingsRepository
+import com.musicplayer.app.domain.repository.TabletLayoutMode
 import com.musicplayer.app.domain.repository.ThemeMode
 import com.musicplayer.app.domain.repository.ThemeStyle
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -65,6 +66,11 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override val editorialLayoutEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
         preferences[EDITORIAL_LAYOUT] ?: true
+    }
+
+    override val tabletLayoutMode: Flow<TabletLayoutMode> = context.settingsDataStore.data.map { preferences ->
+        preferences[TABLET_LAYOUT_MODE]?.let { runCatching { TabletLayoutMode.valueOf(it) }.getOrNull() }
+            ?: TabletLayoutMode.AUTO
     }
 
     override val autoScanLocalLibraryEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
@@ -155,6 +161,10 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setEditorialLayoutEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[EDITORIAL_LAYOUT] = enabled }
+    }
+
+    override suspend fun setTabletLayoutMode(mode: TabletLayoutMode) {
+        context.settingsDataStore.edit { preferences -> preferences[TABLET_LAYOUT_MODE] = mode.name }
     }
 
     override suspend fun setAutoScanLocalLibraryEnabled(enabled: Boolean) {
@@ -292,6 +302,7 @@ class SettingsRepositoryImpl @Inject constructor(
             put("app_language", prefs[APP_LANGUAGE] ?: AppLanguage.CHINESE.name)
             put("dynamic_color", prefs[DYNAMIC_COLOR] ?: false)
             put("editorial_layout", prefs[EDITORIAL_LAYOUT] ?: true)
+            put("tablet_layout_mode", prefs[TABLET_LAYOUT_MODE] ?: TabletLayoutMode.AUTO.name)
             put("auto_scan_local", prefs[AUTO_SCAN_LOCAL] ?: false)
             put("auto_scrape", prefs[AUTO_SCRAPE] ?: true)
             put("background_ai_scrape", prefs[BACKGROUND_AI_SCRAPE] ?: false)
@@ -330,6 +341,7 @@ class SettingsRepositoryImpl @Inject constructor(
             j.optString("app_language").takeIf { it.isNotBlank() }?.let { prefs[APP_LANGUAGE] = it }
             if (j.has("dynamic_color")) prefs[DYNAMIC_COLOR] = j.getBoolean("dynamic_color")
             if (j.has("editorial_layout")) prefs[EDITORIAL_LAYOUT] = j.getBoolean("editorial_layout")
+            j.optString("tablet_layout_mode").takeIf { it.isNotBlank() }?.let { prefs[TABLET_LAYOUT_MODE] = it }
             if (j.has("auto_scan_local")) prefs[AUTO_SCAN_LOCAL] = j.getBoolean("auto_scan_local")
             if (j.has("auto_scrape")) prefs[AUTO_SCRAPE] = j.getBoolean("auto_scrape")
             if (j.has("background_ai_scrape")) {
@@ -450,6 +462,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val APP_LANGUAGE = stringPreferencesKey("app_language")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val EDITORIAL_LAYOUT = booleanPreferencesKey("editorial_layout")
+        val TABLET_LAYOUT_MODE = stringPreferencesKey("tablet_layout_mode")
         val AUTO_SCAN_LOCAL = booleanPreferencesKey("auto_scan_local")
         val AUTO_SCRAPE = booleanPreferencesKey("auto_scrape")
         val BACKGROUND_AI_SCRAPE = booleanPreferencesKey("background_ai_scrape")

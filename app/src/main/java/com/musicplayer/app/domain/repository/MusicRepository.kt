@@ -27,7 +27,8 @@ interface MusicRepository {
     suspend fun refreshMetadata(
         songId: String,
         provider: MetadataProvider = MetadataProvider.AUTO,
-        rebuildLibraryArtwork: Boolean = true
+        rebuildLibraryArtwork: Boolean = true,
+        forceRefresh: Boolean = false
     ): Song?
     suspend fun refreshArtistArtwork(artistName: String): String?
     suspend fun updateSongMetadata(

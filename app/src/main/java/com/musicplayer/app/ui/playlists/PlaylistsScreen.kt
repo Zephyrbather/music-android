@@ -11,29 +11,44 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
-import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.Merge
+import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,30 +60,44 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.musicplayer.app.data.recommend.RecommendedPlaylist
+import com.musicplayer.app.data.recommend.RecommendedPlaylistKind
 import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.components.PlaylistCard
 import com.musicplayer.app.ui.components.SongListItem
+import com.musicplayer.app.ui.components.shareSongs
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-private const val RANKING_PREVIEW_LIMIT = 30
-
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistsScreen(
     onOpenPlaylist: (String) -> Unit,
+    onPlaySong: (Song, List<Song>) -> Unit,
+    onOpenListeningStats: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: PlaylistsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val rankingPeriod by viewModel.rankingPeriod.collectAsStateWithLifecycle()
-    val rankedSongs by viewModel.rankedSongs.collectAsStateWithLifecycle()
     val aiPlaylistState by viewModel.aiPlaylistState.collectAsStateWithLifecycle()
+    val recommended by viewModel.recommendedPlaylists.collectAsStateWithLifecycle()
+    val refreshing by viewModel.recommendationsRefreshing.collectAsStateWithLifecycle()
+    val librarySongs by viewModel.librarySongs.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
+    val isPadLayout = LocalPadLayout.current
+    val context = LocalContext.current
 
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var showAiDialog by rememberSaveable { mutableStateOf(false) }
@@ -76,11 +105,12 @@ fun PlaylistsScreen(
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
     var mergeTarget by remember { mutableStateOf<Playlist?>(null) }
     var contextPlaylist by remember { mutableStateOf<Playlist?>(null) }
-    var showFullRankings by rememberSaveable(rankingPeriod) { mutableStateOf(false) }
-    val visibleRankedSongs = if (showFullRankings) {
-        rankedSongs
-    } else {
-        rankedSongs.take(RANKING_PREVIEW_LIMIT)
+    var openMix by remember { mutableStateOf<RecommendedPlaylist?>(null) }
+    val songsById = remember(librarySongs) { librarySongs.associateBy { it.id } }
+    val updatedText = recommended.maxOfOrNull { it.updatedAtMs }?.takeIf { it > 0L }?.let { time ->
+        extra.recommendedUpdatedFormat.format(
+            SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(time))
+        )
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -108,10 +138,96 @@ fun PlaylistsScreen(
                 Text(text = strings.newPlaylist)
             }
         }
-        LazyColumn(
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
+            contentPadding = PaddingValues(
+                horizontal = if (isPadLayout) 24.dp else 20.dp,
+                vertical = 4.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 16.dp else 0.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Card(
+                    onClick = onOpenListeningStats,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Headphones,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = extra.listeningStats, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = extra.listeningStatsEntryDesc,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = extra.recommendedPlaylists,
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            IconButton(onClick = { viewModel.refreshRecommendations(force = true) }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = extra.refreshRecommendations
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = listOfNotNull(extra.recommendationsHint, updatedText).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+            itemsIndexed(
+                items = recommended,
+                key = { _, rec -> "rec-${rec.kind.name}-${rec.tag.orEmpty()}" },
+                contentType = { _, _ -> "recommended" }
+            ) { _, rec ->
+                val songCount = rec.songIds.count { it in songsById }
+                RecommendedMixCard(
+                    recommended = rec,
+                    songCount = songCount,
+                    onClick = { openMix = rec }
+                )
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = strings.playlists,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
             itemsIndexed(
                 items = state.playlists,
                 key = { _, p -> p.id },
@@ -183,68 +299,60 @@ fun PlaylistsScreen(
                     }
                 }
             }
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = strings.listeningRankings,
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RankingPeriod.entries.forEach { period ->
-                        FilterChip(
-                            selected = rankingPeriod == period,
-                            onClick = { viewModel.selectRankingPeriod(period) },
-                            label = {
-                                Text(
-                                    when (period) {
-                                        RankingPeriod.DAILY -> strings.daily
-                                        RankingPeriod.WEEKLY -> strings.weekly
-                                        RankingPeriod.MONTHLY -> strings.monthly
-                                        RankingPeriod.YEARLY -> strings.yearly
-                                    }
-                                )
-                            }
+        }
+    }
+
+    openMix?.let { rec ->
+        val mixSongs = rec.songIds.mapNotNull { songsById[it] }
+        val mixTitle = recommendedTitle(rec)
+        ModalBottomSheet(onDismissRequest = { openMix = null }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = mixTitle,
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                        Text(
+                            text = extra.songsCountFormat.format(mixSongs.size),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    IconButton(
+                        onClick = {
+                            shareSongs(context, mixTitle, mixSongs)
+                        },
+                        enabled = mixSongs.isNotEmpty()
+                    ) {
+                        Icon(Icons.Outlined.Share, contentDescription = strings.share)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        mixSongs.firstOrNull()?.let { onPlaySong(it, mixSongs) }
+                        openMix = null
+                    },
+                    enabled = mixSongs.isNotEmpty()
+                ) {
+                    Icon(Icons.Outlined.PlayArrow, contentDescription = null)
+                    Text(extra.playAll)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (rankedSongs.isEmpty()) {
-                item {
-                    Text(
-                        text = strings.noRankingData,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                itemsIndexed(
-                    items = visibleRankedSongs,
-                    key = { _, r -> r.song.id },
-                    contentType = { _, _ -> "ranking-song" }
-                ) { index, ranked ->
-                    RankingSongRow(
-                        rank = index + 1,
-                        song = ranked.song,
-                        totalMs = ranked.totalMs,
-                        onClick = { }
-                    )
-                }
-                if (rankedSongs.size > RANKING_PREVIEW_LIMIT) {
-                    item {
-                        TextButton(
-                            onClick = { showFullRankings = !showFullRankings },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = if (showFullRankings) {
-                                    strings.collapseRanking
-                                } else {
-                                    strings.viewFullRanking.format(rankedSongs.size)
-                                }
-                            )
-                        }
+                LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                    itemsIndexed(items = mixSongs, key = { _, song -> song.id }) { _, song ->
+                        SongListItem(
+                            song = song,
+                            onClick = {
+                                onPlaySong(song, mixSongs)
+                                openMix = null
+                            }
+                        )
                     }
                 }
             }
@@ -347,6 +455,66 @@ fun PlaylistsScreen(
 }
 
 @Composable
+private fun recommendedTitle(rec: RecommendedPlaylist): String {
+    val extra = LocalExtraStrings.current
+    return when (rec.kind) {
+        RecommendedPlaylistKind.FOR_YOU -> extra.recommendedForYou
+        RecommendedPlaylistKind.RECENT -> extra.recentlyPlayedMix
+        RecommendedPlaylistKind.TAG -> extra.tagMixFormat.format(rec.tag.orEmpty())
+        RecommendedPlaylistKind.NEW -> extra.newArrivalsMix
+    }
+}
+
+@Composable
+private fun recommendedIcon(kind: RecommendedPlaylistKind): ImageVector = when (kind) {
+    RecommendedPlaylistKind.FOR_YOU -> Icons.Outlined.AutoAwesome
+    RecommendedPlaylistKind.RECENT -> Icons.Outlined.History
+    RecommendedPlaylistKind.TAG -> Icons.Outlined.Label
+    RecommendedPlaylistKind.NEW -> Icons.Outlined.NewReleases
+}
+
+@Composable
+private fun RecommendedMixCard(
+    recommended: RecommendedPlaylist,
+    songCount: Int,
+    onClick: () -> Unit
+) {
+    val extra = LocalExtraStrings.current
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Icon(
+                    imageVector = recommendedIcon(recommended.kind),
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = recommendedTitle(recommended),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = extra.songsCountFormat.format(songCount),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AiPlaylistDialog(
     generating: Boolean,
     onGenerate: (String) -> Unit,
@@ -390,55 +558,6 @@ private fun AiPlaylistDialog(
             }
         }
     )
-}
-
-@Composable
-private fun RankingSongRow(
-    rank: Int,
-    song: Song,
-    totalMs: Long,
-    onClick: () -> Unit
-) {
-    val strings = LocalStrings.current
-    val hours = totalMs / 3_600_000
-    val minutes = (totalMs % 3_600_000) / 60_000
-    val durationText = if (hours > 0) "${hours}${strings.rankingHours} ${minutes}min"
-    else "${minutes}min"
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = "$rank",
-            style = MaterialTheme.typography.titleMedium,
-            color = if (rank <= 3) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = song.artistName,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Text(
-            text = durationText,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
 }
 
 @Composable

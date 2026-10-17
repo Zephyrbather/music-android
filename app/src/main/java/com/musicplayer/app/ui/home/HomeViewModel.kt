@@ -14,11 +14,14 @@ import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.PlaylistRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.repository.WebDavRepository
+import com.musicplayer.app.domain.usecase.AiGenerateSongTagsUseCase
 import com.musicplayer.app.domain.usecase.FetchMetadataUseCase
 import com.musicplayer.app.domain.usecase.LibraryWorkCoordinator
 import com.musicplayer.app.domain.usecase.LibraryWorkState
 import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
+import com.musicplayer.app.domain.usecase.SeedSongTagsUseCase
+import com.musicplayer.app.domain.usecase.SongTagGenerationResult
 import com.musicplayer.app.ui.library.DownloadProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
@@ -56,18 +59,23 @@ class HomeViewModel @Inject constructor(
     private val playlistRepository: PlaylistRepository,
     private val managePlaylistUseCase: ManagePlaylistUseCase,
     private val playRecordDao: PlayRecordDao,
-    private val commentDao: CommentDao
+    private val commentDao: CommentDao,
+    private val aiGenerateSongTagsUseCase: AiGenerateSongTagsUseCase,
+    private val seedSongTagsUseCase: SeedSongTagsUseCase
 ) : ViewModel() {
+    private val recentTagWeights = MutableStateFlow<Map<String, Int>>(emptyMap())
+
     val uiState: StateFlow<HomeUiState> = combine(
         musicRepository.observeSongs(),
         musicRepository.observeAlbums(),
-        webDavRepository.observeServers()
-    ) { songs, albums, servers ->
+        webDavRepository.observeServers(),
+        recentTagWeights
+    ) { songs, albums, servers, tagWeights ->
         HomeUiState(
             songs = songs,
             albums = albums,
             servers = servers,
-            recommendedSongs = buildRecommendedSongs(songs),
+            recommendedSongs = buildRecommendedSongs(songs, tagWeights),
             recentSongs = songs.sortedByDescending { it.dateAddedEpochMs }.take(6)
         )
     }
@@ -86,6 +94,9 @@ class HomeViewModel @Inject constructor(
     val featuredSong: StateFlow<Song?> = _featuredSong
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            seedSongTagsUseCase()
+        }
         viewModelScope.launch {
             if (settingsRepository.autoScanLocalLibraryEnabled.first()) {
                 libraryWorkCoordinator.startScan()
@@ -119,6 +130,21 @@ class HomeViewModel @Inject constructor(
             val lastPlayedMap = playRecordDao.lastPlayedPerSong().associate { it.songId to it.lastPlayedMs }
             val mostRecentTimestamp = playRecordDao.mostRecentTimestamp()
             val ratingSummaries = commentDao.averageRatingsAll()
+            val recentIds = playRecordDao
+                .topSongsSince(System.currentTimeMillis() - RECENT_TAG_WINDOW_MS, limit = 120)
+                .map { it.songId }
+                .toSet()
+            recentTagWeights.value = songs
+                .asSequence()
+                .filter { it.id in recentIds }
+                .flatMap { song ->
+                    (song.semanticTags + listOfNotNull(song.categoryTag))
+                        .asSequence()
+                        .map { it.trim().lowercase() }
+                        .filter { it.isNotBlank() }
+                }
+                .groupingBy { it }
+                .eachCount()
             val featured = withContext(Dispatchers.Default) {
                 chooseFeaturedSong(
                     songs = songs,
@@ -242,6 +268,16 @@ class HomeViewModel @Inject constructor(
         _editSong.value = null
     }
 
+    fun updateSongTags(songId: String, tags: List<String>) {
+        viewModelScope.launch {
+            musicRepository.updateSongSemanticTags(songId, tags)
+        }
+    }
+
+    suspend fun generateSongTags(song: Song): SongTagGenerationResult {
+        return aiGenerateSongTagsUseCase(song)
+    }
+
     private val _selectedSongId = MutableStateFlow<String?>(null)
     val selectedSongId: StateFlow<String?> = _selectedSongId
 
@@ -252,18 +288,27 @@ class HomeViewModel @Inject constructor(
     val editSong: StateFlow<Song?> = _editSong
 }
 
-private fun buildRecommendedSongs(songs: List<Song>): List<Song> {
-    return songs
+private fun buildRecommendedSongs(songs: List<Song>, tagWeights: Map<String, Int>): List<Song> {
+    val pool = songs
         .sortedWith(
             compareByDescending<Song> { it.isFavorite }
+                .thenByDescending { song -> song.tagAffinity(tagWeights) }
                 .thenByDescending { it.semanticTags.isNotEmpty() }
                 .thenByDescending { !it.categoryTag.isNullOrBlank() }
                 .thenByDescending { !it.artworkUri.isNullOrBlank() }
                 .thenByDescending { it.dateAddedEpochMs }
         )
         .take(RECOMMENDATION_POOL_SIZE)
-        .shuffled()
-        .take(RECOMMENDATION_DISPLAY_COUNT)
+    // Stable per pool: a plain shuffled() reorders on every DB emission during scans/scrapes.
+    val seed = pool.fold(0) { acc, song -> acc * 31 + song.id.hashCode() }
+    return pool.shuffled(Random(seed)).take(RECOMMENDATION_DISPLAY_COUNT)
+}
+
+private fun Song.tagAffinity(tagWeights: Map<String, Int>): Int {
+    if (tagWeights.isEmpty()) return 0
+    return (semanticTags + listOfNotNull(categoryTag))
+        .sumOf { tagWeights[it.trim().lowercase()] ?: 0 }
+        .coerceAtMost(20)
 }
 
 private fun chooseFeaturedSong(
@@ -322,3 +367,4 @@ private fun chooseFeaturedSong(
 
 private const val RECOMMENDATION_POOL_SIZE = 50
 private const val RECOMMENDATION_DISPLAY_COUNT = 10
+private const val RECENT_TAG_WINDOW_MS = 30 * 24 * 60 * 60 * 1000L

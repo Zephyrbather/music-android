@@ -13,9 +13,11 @@ import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.PlaylistRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.repository.WebDavRepository
+import com.musicplayer.app.domain.usecase.AiGenerateSongTagsUseCase
 import com.musicplayer.app.domain.usecase.FetchMetadataUseCase
 import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
+import com.musicplayer.app.domain.usecase.SongTagGenerationResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
 import javax.inject.Inject
@@ -34,7 +36,8 @@ import kotlinx.coroutines.withContext
 enum class LibraryTab {
     SONGS,
     ALBUMS,
-    ARTISTS
+    ARTISTS,
+    TAGS
 }
 
 enum class AlbumSortMode {
@@ -84,7 +87,8 @@ class LibraryViewModel @Inject constructor(
     private val playMusicUseCase: PlayMusicUseCase,
     private val fetchMetadataUseCase: FetchMetadataUseCase,
     private val webDavRepository: WebDavRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val aiGenerateSongTagsUseCase: AiGenerateSongTagsUseCase
 ) : ViewModel() {
     private val selectedTab = MutableStateFlow(LibraryTab.SONGS)
     private val albumSortState = MutableStateFlow(AlbumSortState())
@@ -198,6 +202,43 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch {
             musicRepository.updateSongMetadata(songId, title, artistName, albumTitle, artworkUri, artworkProvider)
         }
+    }
+
+    fun updateSongTags(songId: String, tags: List<String>) {
+        viewModelScope.launch {
+            musicRepository.updateSongSemanticTags(songId, tags)
+        }
+    }
+
+    fun addTagToSongs(tag: String, songIds: Set<String>) {
+        val normalized = tag.trim().removePrefix("#").trim()
+        if (normalized.isBlank() || songIds.isEmpty()) return
+        viewModelScope.launch {
+            musicRepository.observeSongs().first()
+                .filter { it.id in songIds }
+                .forEach { song ->
+                    if (song.semanticTags.none { it.equals(normalized, ignoreCase = true) }) {
+                        musicRepository.updateSongSemanticTags(song.id, song.semanticTags + normalized)
+                    }
+                }
+        }
+    }
+
+    fun deleteTag(tag: String) {
+        viewModelScope.launch {
+            musicRepository.observeSongs().first()
+                .filter { song -> song.semanticTags.any { it.equals(tag, ignoreCase = true) } }
+                .forEach { song ->
+                    musicRepository.updateSongSemanticTags(
+                        song.id,
+                        song.semanticTags.filterNot { it.equals(tag, ignoreCase = true) }
+                    )
+                }
+        }
+    }
+
+    suspend fun generateSongTags(song: Song): SongTagGenerationResult {
+        return aiGenerateSongTagsUseCase(song)
     }
 
     fun downloadSong(song: Song, outputDir: File) {

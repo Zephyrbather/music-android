@@ -35,6 +35,13 @@ interface PlayRecordDao {
     @Query("SELECT COUNT(*) FROM play_records")
     suspend fun count(): Int
 
+    @Query("""
+        SELECT * FROM play_records
+        WHERE listenedAtEpochMs >= :startMs AND listenedAtEpochMs < :endMs
+        ORDER BY listenedAtEpochMs ASC
+    """)
+    suspend fun recordsBetween(startMs: Long, endMs: Long): List<PlayRecordEntity>
+
     @Query("SELECT * FROM play_records")
     suspend fun getAll(): List<PlayRecordEntity>
 

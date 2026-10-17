@@ -1,21 +1,40 @@
 package com.musicplayer.app.ui.home
 
 import android.os.Environment
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -24,6 +43,8 @@ import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.FormatQuote
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -55,11 +76,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -68,14 +93,20 @@ import coil.request.ImageRequest
 import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.Source
+import com.musicplayer.app.ui.adaptive.LocalPadLayout
+import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
 import com.musicplayer.app.ui.components.AlbumCard
 import com.musicplayer.app.ui.components.EditSongDialog
 import com.musicplayer.app.ui.components.SongActionHeader
 import com.musicplayer.app.ui.components.SongListItem
+import com.musicplayer.app.ui.components.SongTagsDialog
+import com.musicplayer.app.ui.components.collectSongTags
 import com.musicplayer.app.domain.usecase.LibraryWorkType
 import com.musicplayer.app.ui.library.DownloadProgress
 import java.io.File
+import kotlin.math.abs
+import kotlin.random.Random
 
 @Composable
 fun HomeScreen(
@@ -99,24 +130,37 @@ fun HomeScreen(
     }
     var removeSong by remember { mutableStateOf<Song?>(null) }
     var deleteFileSong by remember { mutableStateOf<Song?>(null) }
+    var tagSong by remember { mutableStateOf<Song?>(null) }
+    val allTags = remember(state.songs) { collectSongTags(state.songs) }
+    val isPadLayout = LocalPadLayout.current
+    val heroHeight = if (isPadLayout) 360.dp else 320.dp
 
     LaunchedEffect(Unit) {
         viewModel.refreshFeatured()
     }
 
-    LazyColumn(
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(if (isPadLayout) 2 else 1),
         modifier = modifier,
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
+        contentPadding = PaddingValues(
+            start = if (isPadLayout) 28.dp else 20.dp,
+            end = if (isPadLayout) 28.dp else 20.dp,
+            top = 8.dp,
+            bottom = 24.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(if (isPadLayout) 20.dp else 0.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             HomeHero(
                 featuredSong = featuredSong,
                 songs = state.songs,
-                onPlaySong = onPlaySong
+                onPlaySong = onPlaySong,
+                heroHeight = heroHeight,
+                isPadLayout = isPadLayout
             )
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             SectionTitle(
                 title = strings.recentlyAdded,
                 action = {
@@ -131,11 +175,11 @@ fun HomeScreen(
             )
         }
         if (workState.type == LibraryWorkType.SCAN && (workState.running || workState.lastResult != null)) {
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 ScanStatus(workState = workState)
             }
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             SectionTitle(title = strings.recommendedSongs)
         }
         items(
@@ -150,7 +194,7 @@ fun HomeScreen(
                 onMoreClick = { viewModel.showSongActions(song) }
             )
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             SectionTitle(title = strings.recentlyAdded)
         }
         items(
@@ -165,10 +209,10 @@ fun HomeScreen(
                 onMoreClick = { viewModel.showSongActions(song) }
             )
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             SectionTitle(title = strings.albums)
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(
                     items = state.albums,
@@ -178,7 +222,9 @@ fun HomeScreen(
                     AlbumCard(
                         album = album,
                         onClick = {},
-                        modifier = Modifier.fillParentMaxWidth(0.46f)
+                        modifier = Modifier.fillParentMaxWidth(
+                            if (isPadLayout) 0.24f else 0.46f
+                        )
                     )
                 }
             }
@@ -213,6 +259,10 @@ fun HomeScreen(
             onEditInfo = {
                 viewModel.showEditDialog(song)
             },
+            onEditTags = {
+                viewModel.clearActionSong()
+                tagSong = song
+            },
             onRemoveFromLibrary = {
                 viewModel.clearActionSong()
                 removeSong = song
@@ -246,6 +296,19 @@ fun HomeScreen(
                 viewModel.dismissEditDialog()
             },
             onDismiss = { viewModel.dismissEditDialog() }
+        )
+    }
+
+    tagSong?.let { song ->
+        SongTagsDialog(
+            song = song,
+            allTags = allTags,
+            onSave = { tags ->
+                viewModel.updateSongTags(song.id, tags)
+                tagSong = null
+            },
+            onGenerateWithAi = viewModel::generateSongTags,
+            onDismiss = { tagSong = null }
         )
     }
 
@@ -297,107 +360,284 @@ private fun ScanStatus(workState: com.musicplayer.app.domain.usecase.LibraryWork
     }
 }
 
+private val heroLrcTimestamp = Regex("""\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?]""")
+private val heroLrcMetadata =
+    Regex("""^\[(ar|ti|al|by|offset|re|ve|length|kana|language):.*]$""", RegexOption.IGNORE_CASE)
+private val heroLyricCredits = listOf(
+    "作词", "作曲", "编曲", "制作人", "混音", "母带", "录音", "出品", "监制", "和声",
+    "Lyricist", "Composer", "Arranger", "Producer", "Mixed by", "Mastered by"
+)
+
+private fun heroLyricSnippet(song: Song, count: Int): List<String> {
+    val raw = song.lyrics?.takeIf { it.isNotBlank() } ?: return emptyList()
+    val lines = raw.lineSequence()
+        .map { it.replace(heroLrcTimestamp, "").trim() }
+        .filter { it.isNotEmpty() && !heroLrcMetadata.matches(it) }
+        .filterNot { line -> heroLyricCredits.any { line.startsWith(it) } }
+        .toList()
+    if (lines.isEmpty()) return emptyList()
+    val windowStart = Math.floorMod(song.id.hashCode(), maxOf(1, lines.size - count + 1))
+    return lines.drop(windowStart).take(count)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HomeHero(
     featuredSong: Song?,
     songs: List<Song>,
-    onPlaySong: (Song, List<Song>) -> Unit
+    onPlaySong: (Song, List<Song>) -> Unit,
+    heroHeight: Dp = 280.dp,
+    isPadLayout: Boolean = false
 ) {
     val strings = LocalStrings.current
-    val song = featuredSong
+    val heroSongs = remember(featuredSong, songs) { buildHeroSongs(featuredSong, songs) }
+    val shape = RoundedCornerShape(28.dp)
+    val pagerState = rememberPagerState(pageCount = { heroSongs.size })
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(240.dp)
-    ) {
-        if (song != null && !song.artworkUri.isNullOrBlank()) {
-            val context = LocalContext.current
-            val imageRequest = remember(context, song.artworkUri) {
-                ImageRequest.Builder(context)
-                    .data(song.artworkUri)
-                    .crossfade(false)
-                    .build()
-            }
-            AsyncImage(
-                model = imageRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
-                    .clip(MaterialTheme.shapes.large)
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.7f)
-                            )
-                        ),
-                        shape = MaterialTheme.shapes.large
+            .height(heroHeight)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
                     )
+                )
             )
-        } else {
-            Surface(
+    ) {
+        if (heroSongs.isEmpty()) {
+            Box(
                 modifier = Modifier.fillMaxSize(),
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.primaryContainer
+                contentAlignment = Alignment.Center
             ) {
-                Box(
+                Icon(
+                    imageVector = Icons.Outlined.Album,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
+                )
+            }
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val song = heroSongs[page]
+                val lyricLines = remember(song.id, song.lyrics) { heroLyricSnippet(song, 3) }
+                val slide = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(if (isPadLayout) 32.dp else 20.dp)
+                        .graphicsLayer {
+                            translationX = slide * 90f
+                            alpha = 1f - (abs(slide) * 0.35f).coerceIn(0f, 0.6f)
+                        },
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Album,
-                        contentDescription = null,
+                    Column(modifier = Modifier.weight(1.25f)) {
+                        Text(
+                            text = strings.heroPicks,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = song.title,
+                            style = if (isPadLayout) MaterialTheme.typography.headlineMedium
+                            else MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "${song.artistName} · ${song.albumTitle}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (lyricLines.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FormatQuote,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .size(if (isPadLayout) 20.dp else 16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    lyricLines.forEach { line ->
+                                        Text(
+                                            text = line,
+                                            style = if (isPadLayout) MaterialTheme.typography.bodyLarge
+                                            else MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { onPlaySong(song, songs) }) {
+                            Icon(imageVector = Icons.Outlined.PlayArrow, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = strings.playFeature)
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HeroPagerDots(count = heroSongs.size, currentPage = pagerState.currentPage)
+                    }
+                    Spacer(modifier = Modifier.width(if (isPadLayout) 20.dp else 12.dp))
+                    CoverCollage(
+                        songs = heroSongs,
+                        startIndex = page,
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(64.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
+                            .weight(if (isPadLayout) 1.5f else 1.2f)
+                            .fillMaxHeight()
                     )
-                }
-            }
-        }
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = song?.title ?: strings.musicLibrary,
-                style = MaterialTheme.typography.headlineSmall,
-                color = if (song?.artworkUri != null) Color.White
-                else MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = song?.let { "${it.artistName} · ${it.albumTitle}" }
-                    ?: strings.localAndWebDav,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (song?.artworkUri != null) Color.White.copy(alpha = 0.8f)
-                else MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (song != null) {
-                Button(
-                    onClick = { onPlaySong(song, songs) },
-                    modifier = Modifier.padding(top = 4.dp)
-                ) {
-                    Icon(imageVector = Icons.Outlined.PlayArrow, contentDescription = null)
-                    Text(text = strings.playFeature)
                 }
             }
         }
     }
 }
+
+private data class CoverFanSpec(
+    val rotation: Float,
+    val xFraction: Float,
+    val yFraction: Float,
+    val scale: Float,
+    val alpha: Float
+)
+
+private val coverFanSpecs = listOf(
+    CoverFanSpec(rotation = -22f, xFraction = -0.92f, yFraction = -0.06f, scale = 0.60f, alpha = 0.34f),
+    CoverFanSpec(rotation = 20f, xFraction = 0.86f, yFraction = -0.14f, scale = 0.64f, alpha = 0.42f),
+    CoverFanSpec(rotation = -16f, xFraction = -0.66f, yFraction = 0.10f, scale = 0.72f, alpha = 0.56f),
+    CoverFanSpec(rotation = 13f, xFraction = 0.58f, yFraction = -0.02f, scale = 0.78f, alpha = 0.68f),
+    CoverFanSpec(rotation = -8f, xFraction = -0.34f, yFraction = -0.10f, scale = 0.86f, alpha = 0.82f),
+    CoverFanSpec(rotation = 5f, xFraction = 0.24f, yFraction = 0.10f, scale = 0.93f, alpha = 0.92f),
+    CoverFanSpec(rotation = 0f, xFraction = 0f, yFraction = 0.02f, scale = 1f, alpha = 1f)
+)
+
+// Offsets borrow the next songs for the fan, but the front card (spec index 6)
+// must always be the song whose info is shown on the left.
+private val coverFanSongOffsets = listOf(-3, 3, -2, 2, -1, 1, 0)
+
+@Composable
+private fun CoverCollage(
+    songs: List<Song>,
+    startIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    if (songs.isEmpty()) return
+    val covers = remember(songs, startIndex) {
+        coverFanSongOffsets.map { offset ->
+            songs[Math.floorMod(startIndex + offset, songs.size)]
+        }
+    }
+    val context = LocalContext.current
+    val coverShape = RoundedCornerShape(18.dp)
+
+    BoxWithConstraints(modifier = modifier) {
+        val coverSize = minOf(maxWidth * 0.56f, maxHeight * 0.76f)
+        covers.forEachIndexed { index, cover ->
+            val spec = coverFanSpecs[index]
+            val transition = rememberInfiniteTransition(label = "hero-cover-$index")
+            val drift by transition.animateFloat(
+                initialValue = -1f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 3600 + index * 650,
+                        easing = FastOutSlowInEasing
+                    ),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "hero-cover-drift-$index"
+            )
+            val imageRequest = remember(context, cover.artworkUri) {
+                ImageRequest.Builder(context)
+                    .data(cover.artworkUri)
+                    .crossfade(true)
+                    .build()
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(x = coverSize * spec.xFraction, y = coverSize * spec.yFraction)
+                    .size(coverSize)
+                    .graphicsLayer {
+                        rotationZ = spec.rotation + drift * (1.1f + index * 0.45f)
+                        translationY = drift * 5.dp.toPx() * (1f + index * 0.2f)
+                        scaleX = spec.scale
+                        scaleY = spec.scale
+                        alpha = spec.alpha
+                    }
+                    .shadow(
+                        elevation = if (index == covers.lastIndex) 22.dp else 8.dp,
+                        shape = coverShape,
+                        clip = false
+                    )
+                    .clip(coverShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                AsyncImage(
+                    model = imageRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroPagerDots(count: Int, currentPage: Int) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(count) { index ->
+            val selected = index == currentPage
+            Box(
+                modifier = Modifier
+                    .size(width = if (selected) 18.dp else 6.dp, height = 6.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    )
+            )
+        }
+    }
+}
+
+private fun buildHeroSongs(featured: Song?, songs: List<Song>): List<Song> {
+    val withArtwork = songs.filter { !it.artworkUri.isNullOrBlank() }
+    if (withArtwork.isEmpty()) return emptyList()
+    val seed = withArtwork.fold(0) { acc, song -> acc * 31 + song.id.hashCode() }
+    val picks = withArtwork
+        .filter { it.id != featured?.id }
+        .shuffled(Random(seed))
+        .take(HERO_SONG_COUNT)
+    return (listOfNotNull(featured?.takeIf { !it.artworkUri.isNullOrBlank() }) + picks)
+        .distinctBy { it.id }
+        .take(HERO_SONG_COUNT)
+}
+
+private const val HERO_SONG_COUNT = 10
 
 @Composable
 private fun SectionTitle(
@@ -429,6 +669,7 @@ private fun SongActionSheet(
     onToggleFavorite: () -> Unit,
     onShare: () -> Unit,
     onEditInfo: () -> Unit,
+    onEditTags: () -> Unit,
     onRemoveFromLibrary: () -> Unit,
     onDeleteFile: () -> Unit,
     onOpenArtist: () -> Unit,
@@ -497,6 +738,19 @@ private fun SongActionSheet(
             )
         }
         Divider()
+        ListItem(
+            headlineContent = { Text(LocalExtraStrings.current.tags) },
+            supportingContent = {
+                Text(
+                    text = song.semanticTags.takeIf { it.isNotEmpty() }?.joinToString(" · ") { "#$it" }
+                        ?: LocalExtraStrings.current.noTags,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            leadingContent = { Icon(Icons.Outlined.Label, contentDescription = null) },
+            modifier = Modifier.clickable(onClick = onEditTags)
+        )
         ListItem(
             headlineContent = { Text(strings.editInfo) },
             leadingContent = { Icon(Icons.Outlined.MoreVert, contentDescription = null) },
