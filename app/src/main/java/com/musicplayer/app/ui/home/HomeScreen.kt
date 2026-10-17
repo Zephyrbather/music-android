@@ -76,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -465,17 +466,27 @@ private fun HomeHero(
                         )
                         if (lyricLines.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(14.dp))
-                            Row(verticalAlignment = Alignment.Top) {
+                            val quoteSize = if (isPadLayout) 20.dp else 16.dp
+                            val quoteTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                            Column {
                                 Icon(
                                     imageVector = Icons.Outlined.FormatQuote,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                    tint = quoteTint,
                                     modifier = Modifier
-                                        .padding(top = 2.dp)
-                                        .size(if (isPadLayout) 20.dp else 16.dp)
+                                        .rotate(180f)
+                                        .size(quoteSize)
+                                        .offset(x = 2.dp, y = 4.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .offset(y = (-6).dp)
+                                        .padding(
+                                            start = if (isPadLayout) 24.dp else 18.dp,
+                                            end = if (isPadLayout) 12.dp else 8.dp
+                                        ),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
                                     lyricLines.forEach { line ->
                                         Text(
                                             text = line,
@@ -487,6 +498,15 @@ private fun HomeHero(
                                         )
                                     }
                                 }
+                                Icon(
+                                    imageVector = Icons.Outlined.FormatQuote,
+                                    contentDescription = null,
+                                    tint = quoteTint,
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .size(quoteSize)
+                                        .offset(x = (-2).dp, y = (-4).dp)
+                                )
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
