@@ -72,6 +72,7 @@ import com.musicplayer.app.domain.repository.ThemeStyle
 import com.musicplayer.app.domain.usecase.LibraryWorkState
 import com.musicplayer.app.domain.usecase.LibraryWorkType
 import com.musicplayer.app.ui.adaptive.LocalPadLayout
+import com.musicplayer.app.ui.components.LogoCropDialog
 import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalStrings
 import com.musicplayer.app.ui.i18n.ThemeModeTitle
@@ -162,10 +163,11 @@ fun AppearanceSettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val strings = LocalStrings.current
     val extra = LocalExtraStrings.current
+    var pendingLogoUri by remember { mutableStateOf<Uri?>(null) }
     val logoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) viewModel.setCustomLogoUri(uri)
+        if (uri != null) pendingLogoUri = uri
     }
     SettingsPage(
         title = strings.theme,
@@ -367,6 +369,17 @@ fun AppearanceSettingsScreen(
                 }
             }
         }
+    }
+
+    pendingLogoUri?.let { uri ->
+        LogoCropDialog(
+            sourceUri = uri,
+            onDismiss = { pendingLogoUri = null },
+            onConfirm = { cropped ->
+                viewModel.setCustomLogoUri(cropped)
+                pendingLogoUri = null
+            }
+        )
     }
 }
 

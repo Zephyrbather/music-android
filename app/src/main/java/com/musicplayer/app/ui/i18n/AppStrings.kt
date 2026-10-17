@@ -346,7 +346,11 @@ data class ExtraStrings(
     val customLogoTitle: String,
     val customLogoDesc: String,
     val chooseLogoImage: String,
-    val resetLogo: String
+    val resetLogo: String,
+    val logoCropTitle: String,
+    val logoCropHint: String,
+    val logoZoom: String,
+    val logoLoadFailed: String
 )
 
 val LocalStrings = staticCompositionLocalOf { chineseStrings }
@@ -740,7 +744,11 @@ private val chineseExtraStrings = ExtraStrings(
     customLogoTitle = "自定义图标",
     customLogoDesc = "上传图片替换左上角的音符图标",
     chooseLogoImage = "选择图片",
-    resetLogo = "恢复默认"
+    resetLogo = "恢复默认",
+    logoCropTitle = "调整显示区域",
+    logoCropHint = "拖动图片移动位置，双指缩放或用滑块放大",
+    logoZoom = "缩放",
+    logoLoadFailed = "图片加载失败"
 )
 
 private val englishStrings = AppStrings(
@@ -1082,5 +1090,9 @@ private val englishExtraStrings = ExtraStrings(
     customLogoTitle = "Custom logo",
     customLogoDesc = "Choose an image to replace the music note icon in the top-left corner",
     chooseLogoImage = "Choose image",
-    resetLogo = "Reset to default"
+    resetLogo = "Reset to default",
+    logoCropTitle = "Adjust visible area",
+    logoCropHint = "Drag to move, pinch or use the slider to zoom in",
+    logoZoom = "Zoom",
+    logoLoadFailed = "Failed to load image"
 )
