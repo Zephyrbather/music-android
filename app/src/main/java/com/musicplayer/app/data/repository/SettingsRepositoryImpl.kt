@@ -55,6 +55,10 @@ class SettingsRepositoryImpl @Inject constructor(
             ?: FontFamilyOption.DEFAULT
     }
 
+    override val customLogoUri: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[CUSTOM_LOGO_URI].orEmpty()
+    }
+
     override val appLanguage: Flow<AppLanguage> = context.settingsDataStore.data.map { preferences ->
         preferences[APP_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
             ?: AppLanguage.CHINESE
@@ -149,6 +153,16 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setFontFamilyOption(option: FontFamilyOption) {
         context.settingsDataStore.edit { preferences -> preferences[FONT_FAMILY] = option.name }
+    }
+
+    override suspend fun setCustomLogoUri(uri: String) {
+        context.settingsDataStore.edit { preferences ->
+            if (uri.isBlank()) {
+                preferences.remove(CUSTOM_LOGO_URI)
+            } else {
+                preferences[CUSTOM_LOGO_URI] = uri
+            }
+        }
     }
 
     override suspend fun setAppLanguage(language: AppLanguage) {
@@ -459,6 +473,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val THEME_STYLE = stringPreferencesKey("theme_style")
         val FONT_FAMILY = stringPreferencesKey("font_family")
+        val CUSTOM_LOGO_URI = stringPreferencesKey("custom_logo_uri")
         val APP_LANGUAGE = stringPreferencesKey("app_language")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val EDITORIAL_LAYOUT = booleanPreferencesKey("editorial_layout")

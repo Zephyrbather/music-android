@@ -1,6 +1,7 @@
 package com.musicplayer.app.ui.settings
 
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.annotation.ExperimentalCoilApi
@@ -41,6 +42,7 @@ data class SettingsUiState(
     val dynamicColor: Boolean = false,
     val editorialLayout: Boolean = true,
     val tabletLayoutMode: TabletLayoutMode = TabletLayoutMode.AUTO,
+    val customLogoUri: String = "",
     val autoScanLocalLibrary: Boolean = false,
     val autoScrape: Boolean = true,
     val backgroundAiScrape: Boolean = false,
@@ -66,13 +68,18 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
     private val appearanceState = combine(
         combine(
-            settingsRepository.themeMode,
-            settingsRepository.themeStyle,
-            settingsRepository.appLanguage,
-            settingsRepository.dynamicColorEnabled,
-            settingsRepository.editorialLayoutEnabled
-        ) { themeMode, themeStyle, appLanguage, dynamicColor, editorialLayout ->
-            arrayOf(themeMode, themeStyle, appLanguage, dynamicColor, editorialLayout)
+            combine(
+                settingsRepository.themeMode,
+                settingsRepository.themeStyle,
+                settingsRepository.appLanguage,
+                settingsRepository.dynamicColorEnabled
+            ) { themeMode, themeStyle, appLanguage, dynamicColor ->
+                arrayOf<Any>(themeMode, themeStyle, appLanguage, dynamicColor)
+            },
+            settingsRepository.editorialLayoutEnabled,
+            settingsRepository.customLogoUri
+        ) { base, editorialLayout, customLogoUri ->
+            arrayOf<Any>(base[0], base[1], base[2], base[3], editorialLayout, customLogoUri)
         },
         settingsRepository.tabletLayoutMode,
         settingsRepository.fontFamilyOption
@@ -84,6 +91,7 @@ class SettingsViewModel @Inject constructor(
             arr[2] as AppLanguage,
             arr[3] as Boolean,
             arr[4] as Boolean,
+            arr[5] as String,
             tabletLayoutMode,
             fontFamily
         )
@@ -144,6 +152,7 @@ class SettingsViewModel @Inject constructor(
             dynamicColor = appearance.dynamicColor,
             editorialLayout = appearance.editorialLayout,
             tabletLayoutMode = appearance.tabletLayoutMode,
+            customLogoUri = appearance.customLogoUri,
             autoScanLocalLibrary = library.autoScan,
             autoScrape = scraping.autoScrape,
             backgroundAiScrape = scraping.backgroundAiScrape,
@@ -300,6 +309,24 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setCustomLogoUri(uri: Uri?) {
+        viewModelScope.launch {
+            if (uri == null) {
+                settingsRepository.setCustomLogoUri("")
+                return@launch
+            }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    appContext.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+            }
+            settingsRepository.setCustomLogoUri(uri.toString())
+        }
+    }
+
     fun setAutoScanLocalLibrary(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setAutoScanLocalLibraryEnabled(enabled)
@@ -429,6 +456,7 @@ private data class AppearanceSettings(
     val appLanguage: AppLanguage,
     val dynamicColor: Boolean,
     val editorialLayout: Boolean,
+    val customLogoUri: String,
     val tabletLayoutMode: TabletLayoutMode,
     val fontFamily: FontFamilyOption
 )

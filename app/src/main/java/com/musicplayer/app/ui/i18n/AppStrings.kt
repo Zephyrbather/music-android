@@ -342,7 +342,11 @@ data class ExtraStrings(
     val noMatchingSongs: String,
     val auroraTheme: String,
     val sunsetTheme: String,
-    val lavaTheme: String
+    val lavaTheme: String,
+    val customLogoTitle: String,
+    val customLogoDesc: String,
+    val chooseLogoImage: String,
+    val resetLogo: String
 )
 
 val LocalStrings = staticCompositionLocalOf { chineseStrings }
@@ -732,7 +736,11 @@ private val chineseExtraStrings = ExtraStrings(
     noMatchingSongs = "没有匹配的歌曲",
     auroraTheme = "极光",
     sunsetTheme = "落日",
-    lavaTheme = "熔岩"
+    lavaTheme = "熔岩",
+    customLogoTitle = "自定义图标",
+    customLogoDesc = "上传图片替换左上角的音符图标",
+    chooseLogoImage = "选择图片",
+    resetLogo = "恢复默认"
 )
 
 private val englishStrings = AppStrings(
@@ -1070,5 +1078,9 @@ private val englishExtraStrings = ExtraStrings(
     noMatchingSongs = "No matching songs",
     auroraTheme = "Aurora",
     sunsetTheme = "Sunset",
-    lavaTheme = "Lava"
+    lavaTheme = "Lava",
+    customLogoTitle = "Custom logo",
+    customLogoDesc = "Choose an image to replace the music note icon in the top-left corner",
+    chooseLogoImage = "Choose image",
+    resetLogo = "Reset to default"
 )

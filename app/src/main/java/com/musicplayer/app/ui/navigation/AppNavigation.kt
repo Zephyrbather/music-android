@@ -47,13 +47,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -355,6 +358,7 @@ fun AppNavigation() {
                             PadNavigationRail(
                                 currentDestination = currentDestination,
                                 navController = navController,
+                                logoUri = settings.customLogoUri,
                                 onNavigate = { showNowPlaying = false }
                             )
                             Box(modifier = Modifier.weight(1f)) {
@@ -469,6 +473,7 @@ private fun MiniPlayerRoute(
 private fun PadNavigationRail(
     currentDestination: NavDestination?,
     navController: NavHostController,
+    logoUri: String,
     onNavigate: () -> Unit
 ) {
     val strings = LocalStrings.current
@@ -486,11 +491,22 @@ private fun PadNavigationRail(
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer
             ) {
                 Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Outlined.MusicNote,
-                        contentDescription = null,
-                        modifier = Modifier.size(26.dp)
-                    )
+                    if (logoUri.isNotBlank()) {
+                        AsyncImage(
+                            model = logoUri,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Outlined.MusicNote,
+                            contentDescription = null,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
         }

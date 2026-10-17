@@ -97,6 +97,8 @@ interface SettingsRepository {
     suspend fun removeLocalScanFolder(uri: String)
     val fontFamilyOption: Flow<FontFamilyOption>
     suspend fun setFontFamilyOption(option: FontFamilyOption)
+    val customLogoUri: Flow<String>
+    suspend fun setCustomLogoUri(uri: String)
     val webDavFolderUris: Flow<List<String>>
     suspend fun addWebDavFolder(serverId: String, path: String)
     suspend fun removeWebDavFolder(serverId: String, path: String)
