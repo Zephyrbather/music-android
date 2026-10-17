@@ -658,6 +658,7 @@ private fun NowPlayingRoute(
     val showCommentDialog by playerViewModel.showCommentDialog.collectAsStateWithLifecycle()
     val candidates by playerViewModel.candidates.collectAsStateWithLifecycle()
     val showCandidateDialog by playerViewModel.showCandidateDialog.collectAsStateWithLifecycle()
+    val playlists by playerViewModel.playlists.collectAsStateWithLifecycle()
     NowPlayingScreen(
         playbackState = playbackState,
         onClose = onClose,
@@ -675,6 +676,9 @@ private fun NowPlayingRoute(
         lyricFontScale = lyricFontScale,
         onAdjustLyricFontScale = playerViewModel::adjustLyricFontScale,
         onResetLyricFontScale = playerViewModel::resetLyricFontScale,
+        playlists = playlists,
+        onAddToPlaylist = playerViewModel::addCurrentSongToPlaylist,
+        onCreatePlaylistWithCurrentSong = playerViewModel::createPlaylistForCurrentSong,
         onOpenEqualizer = onOpenEqualizer,
         onOpenScrapeDetail = onOpenScrapeDetail,
         showCommentDialog = showCommentDialog,

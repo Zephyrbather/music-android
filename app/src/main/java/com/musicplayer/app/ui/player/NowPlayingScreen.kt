@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -40,7 +41,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Close
@@ -97,6 +100,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -119,6 +124,7 @@ import com.musicplayer.app.domain.model.MetadataProvider
 import com.musicplayer.app.domain.model.ScrapeCandidates
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
+import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.ui.adaptive.LocalPadLayout
 import com.musicplayer.app.ui.components.LyricPosterDialog
@@ -155,6 +161,9 @@ fun NowPlayingScreen(
     lyricFontScale: Float = 1f,
     onAdjustLyricFontScale: (Float) -> Unit = {},
     onResetLyricFontScale: () -> Unit = {},
+    playlists: List<Playlist> = emptyList(),
+    onAddToPlaylist: (String) -> Unit = {},
+    onCreatePlaylistWithCurrentSong: () -> Unit = {},
     onOpenEqualizer: () -> Unit = {},
     onOpenScrapeDetail: () -> Unit = {},
     showCommentDialog: Boolean = false,
@@ -174,6 +183,7 @@ fun NowPlayingScreen(
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var lyricsMode by rememberSaveable(song?.id) { mutableStateOf(false) }
     var karaokeMode by rememberSaveable(song?.id) { mutableStateOf(false) }
+    var showAddToPlaylist by remember { mutableStateOf(false) }
     var posterRequest by remember { mutableStateOf<LyricPosterRequest?>(null) }
     val openPoster: (List<String>, Int) -> Unit = { lines, index ->
         song?.let { posterRequest = LyricPosterRequest(it, lines, index) }
@@ -237,6 +247,7 @@ fun NowPlayingScreen(
             onQueueClick = { showQueue = true },
             onCommentsClick = onOpenComments,
             onKaraokeClick = { karaokeMode = true },
+            onAddToPlaylistClick = { showAddToPlaylist = true },
             lyricOffsetMs = lyricOffsetMs,
             onAdjustLyricOffset = onAdjustLyricOffset,
             onResetLyricOffset = onResetLyricOffset,
@@ -355,7 +366,8 @@ fun NowPlayingScreen(
             onEqualizerClick = onOpenEqualizer,
             onQueueClick = { showQueue = true },
             onCommentsClick = onOpenComments,
-            onKaraokeClick = { karaokeMode = true }
+            onKaraokeClick = { karaokeMode = true },
+            onAddToPlaylistClick = { showAddToPlaylist = true }
         )
         PlaybackProgress(
             positionMs = playbackState.positionMs,
@@ -382,6 +394,22 @@ fun NowPlayingScreen(
             onSongSelected = onQueueSongSelected,
             onPlaybackModeChange = onPlaybackModeChange,
             onDismiss = { showQueue = false }
+        )
+    }
+
+    if (showAddToPlaylist) {
+        AddToPlaylistDialog(
+            songTitle = song?.title,
+            playlists = playlists,
+            onSelect = { playlistId ->
+                onAddToPlaylist(playlistId)
+                showAddToPlaylist = false
+            },
+            onCreateNew = {
+                onCreatePlaylistWithCurrentSong()
+                showAddToPlaylist = false
+            },
+            onDismiss = { showAddToPlaylist = false }
         )
     }
 
@@ -416,6 +444,7 @@ private fun PadNowPlayingContent(
     onQueueClick: () -> Unit,
     onCommentsClick: () -> Unit,
     onKaraokeClick: () -> Unit,
+    onAddToPlaylistClick: () -> Unit,
     lyricOffsetMs: Long,
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
@@ -504,7 +533,9 @@ private fun PadNowPlayingContent(
                     onEqualizerClick = onEqualizerClick,
                     onQueueClick = onQueueClick,
                     onCommentsClick = onCommentsClick,
-                    onKaraokeClick = onKaraokeClick
+                    onKaraokeClick = onKaraokeClick,
+                    onAddToPlaylistClick = onAddToPlaylistClick,
+                    showQueueButton = false
                 )
                 PlaybackProgress(
                     positionMs = playbackState.positionMs,
@@ -528,6 +559,7 @@ private fun PadNowPlayingContent(
                 lyricOffsetMs = lyricOffsetMs,
                 lyricFontScale = lyricFontScale,
                 onOpenPoster = onOpenPoster,
+                onQueueClick = onQueueClick,
                 modifier = Modifier
                     .weight(0.9f)
                     .fillMaxHeight()
@@ -558,6 +590,7 @@ private fun PadLyricsPanel(
     lyricOffsetMs: Long,
     lyricFontScale: Float,
     onOpenPoster: (List<String>, Int) -> Unit,
+    onQueueClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
@@ -578,13 +611,14 @@ private fun PadLyricsPanel(
         shape = MaterialTheme.shapes.extraLarge,
         color = Color.Transparent
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             when {
                 timedLines.isNotEmpty() -> {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 20.dp),
+                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 84.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         itemsIndexed(timedLines, key = { index, _ -> index }) { index, line ->
@@ -614,7 +648,7 @@ private fun PadLyricsPanel(
                 !song?.lyrics.isNullOrBlank() -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 20.dp)
+                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 62.dp, bottom = 84.dp)
                     ) {
                         item {
                             Text(
@@ -651,6 +685,28 @@ private fun PadLyricsPanel(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+        }
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 16.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                tonalElevation = 3.dp
+            ) {
+                IconButton(
+                    onClick = onQueueClick,
+                    enabled = song != null,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.QueueMusic,
+                        contentDescription = strings.playlist,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -758,7 +814,9 @@ private fun PanelButtonRow(
     onEqualizerClick: () -> Unit,
     onQueueClick: () -> Unit,
     onCommentsClick: () -> Unit = {},
-    onKaraokeClick: () -> Unit = {}
+    onKaraokeClick: () -> Unit = {},
+    onAddToPlaylistClick: () -> Unit = {},
+    showQueueButton: Boolean = true
 ) {
     val strings = LocalStrings.current
     val karaokeStrings = LocalKaraokeStrings.current
@@ -808,11 +866,23 @@ private fun PanelButtonRow(
             Icon(Icons.Outlined.StarBorder, contentDescription = strings.comments)
         }
         IconButton(
-            onClick = onQueueClick,
-            enabled = hasQueue,
+            onClick = onAddToPlaylistClick,
+            enabled = enabled,
             modifier = Modifier.size(44.dp)
         ) {
-            Icon(Icons.Outlined.QueueMusic, contentDescription = strings.playlist)
+            Icon(
+                Icons.AutoMirrored.Outlined.PlaylistAdd,
+                contentDescription = strings.addToPlaylist
+            )
+        }
+        if (showQueueButton) {
+            IconButton(
+                onClick = onQueueClick,
+                enabled = hasQueue,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Icon(Icons.Outlined.QueueMusic, contentDescription = strings.playlist)
+            }
         }
     }
 }
@@ -905,99 +975,155 @@ private fun QueueDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp),
-            contentAlignment = Alignment.BottomCenter
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            contentAlignment = Alignment.BottomEnd
         ) {
             Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 420.dp),
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
+                    .widthIn(min = 300.dp, max = 420.dp)
+                    .heightIn(max = 520.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
+                shadowElevation = 14.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
             ) {
-                Column(modifier = Modifier.padding(vertical = 12.dp)) {
-                    Row(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Outlined.Close, contentDescription = strings.close)
-                        }
-                        Text(
-                            text = strings.playlist,
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        IconButton(
-                            onClick = {
-                                val nextMode = when (playbackMode) {
-                                    PlaybackMode.SEQUENTIAL -> PlaybackMode.SHUFFLE
-                                    PlaybackMode.SHUFFLE -> PlaybackMode.RECOMMENDATION
-                                    PlaybackMode.RECOMMENDATION -> PlaybackMode.SEQUENTIAL
-                                }
-                                onPlaybackModeChange(nextMode)
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            val tint = MaterialTheme.colorScheme.onSurface
-                            when (playbackMode) {
-                                PlaybackMode.SEQUENTIAL -> SequentialIcon(tint)
-                                PlaybackMode.SHUFFLE -> Icon(
-                                    Icons.Outlined.Shuffle,
-                                    contentDescription = strings.shuffle,
-                                    tint = tint
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                        Color.Transparent
+                                    )
                                 )
-                                PlaybackMode.RECOMMENDATION -> RecommendationIcon(tint)
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.QueueMusic,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = strings.playlist,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "${queue.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    val nextMode = when (playbackMode) {
+                                        PlaybackMode.SEQUENTIAL -> PlaybackMode.SHUFFLE
+                                        PlaybackMode.SHUFFLE -> PlaybackMode.RECOMMENDATION
+                                        PlaybackMode.RECOMMENDATION -> PlaybackMode.SEQUENTIAL
+                                    }
+                                    onPlaybackModeChange(nextMode)
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                val tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                when (playbackMode) {
+                                    PlaybackMode.SEQUENTIAL -> SequentialIcon(tint)
+                                    PlaybackMode.SHUFFLE -> Icon(
+                                        Icons.Outlined.Shuffle,
+                                        contentDescription = strings.shuffle,
+                                        tint = tint
+                                    )
+                                    PlaybackMode.RECOMMENDATION -> RecommendationIcon(tint)
+                                }
+                            }
+                            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = strings.close,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                     LazyColumn(
                         state = listState,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier.heightIn(max = 420.dp),
+                        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         itemsIndexed(queue, key = { _, song -> song.id }) { index, song ->
                             val selected = song.id == currentSongId
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
                                     .clickable {
                                         onSongSelected(song)
                                         onDismiss()
                                     },
-                                shape = MaterialTheme.shapes.medium,
+                                shape = RoundedCornerShape(16.dp),
                                 color = if (selected) {
-                                    MaterialTheme.colorScheme.primaryContainer
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.13f)
                                 } else {
-                                    MaterialTheme.colorScheme.surface
+                                    Color.Transparent
                                 }
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Text(
-                                        text = (index + 1).toString(),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.width(26.dp),
-                                        textAlign = TextAlign.Center
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (selected) {
+                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.surfaceContainerHighest
+                                                }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = (index + 1).toString(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = song.title,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
                                             text = "${song.artistName} - ${song.albumTitle}",
-                                            style = MaterialTheme.typography.bodyMedium,
+                                            style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -1005,12 +1131,190 @@ private fun QueueDialog(
                                     }
                                     Text(
                                         text = formatDuration(song.durationMs),
-                                        style = MaterialTheme.typography.labelMedium,
+                                        style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddToPlaylistDialog(
+    songTitle: String?,
+    playlists: List<Playlist>,
+    onSelect: (String) -> Unit,
+    onCreateNew: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalStrings.current
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp, vertical = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 380.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 6.dp,
+                shadowElevation = 14.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.PlaylistAdd,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = strings.addToPlaylist,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (!songTitle.isNullOrBlank()) {
+                                Text(
+                                    text = songTitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                Icons.Outlined.Close,
+                                contentDescription = strings.close,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (playlists.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 300.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(playlists, key = { it.id }) { playlist ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .clickable { onSelect(playlist.id) },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = Color.Transparent
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.QueueMusic,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = playlist.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${playlist.songCount}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Icon(
+                                            Icons.Outlined.Add,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(onClick = onCreateNew)
+                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Text(
+                            text = strings.addToNewPlaylist,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
@@ -1697,34 +2001,32 @@ private fun RecommendationIcon(tint: androidx.compose.ui.graphics.Color) {
         val w = size.width
         val h = size.height
         val cx = w / 2f
-        val heartPath = androidx.compose.ui.graphics.Path().apply {
-            moveTo(cx, h * 0.25f)
-            lineTo(cx, h * 0.8f)
-            lineTo(w * 0.12f, h * 0.5f)
-            cubicTo(w * 0.02f, h * 0.4f, w * 0.05f, h * 0.15f, cx * 0.55f, h * 0.15f)
-            cubicTo(cx * 0.75f, h * 0.15f, cx * 0.9f, h * 0.28f, cx, h * 0.42f)
-            cubicTo(cx * 1.1f, h * 0.28f, cx * 1.25f, h * 0.15f, cx * 1.45f, h * 0.15f)
-            cubicTo(cx * 1.95f, h * 0.15f, cx * 1.98f, h * 0.4f, cx * 1.88f, h * 0.5f)
-            lineTo(cx, h * 0.8f)
+        val heartPath = Path().apply {
+            moveTo(cx, h * 0.85f)
+            cubicTo(w * 0.78f, h * 0.70f, w * 0.11f, h * 0.54f, w * 0.11f, h * 0.34f)
+            cubicTo(w * 0.11f, h * 0.17f, w * 0.27f, h * 0.10f, w * 0.39f, h * 0.17f)
+            cubicTo(w * 0.45f, h * 0.21f, cx, h * 0.28f, cx, h * 0.36f)
+            cubicTo(cx, h * 0.28f, w * 0.55f, h * 0.21f, w * 0.61f, h * 0.17f)
+            cubicTo(w * 0.73f, h * 0.10f, w * 0.89f, h * 0.17f, w * 0.89f, h * 0.34f)
+            cubicTo(w * 0.89f, h * 0.54f, w * 0.72f, h * 0.70f, cx, h * 0.85f)
             close()
         }
-        drawPath(heartPath, tint)
-        val ecgY = h * 0.32f
-        val ecgPath = androidx.compose.ui.graphics.Path().apply {
-            moveTo(w * 0.3f, ecgY)
-            lineTo(w * 0.4f, ecgY)
-            lineTo(w * 0.45f, ecgY - h * 0.08f)
-            lineTo(w * 0.5f, ecgY + h * 0.1f)
-            lineTo(w * 0.55f, ecgY - h * 0.12f)
-            lineTo(w * 0.6f, ecgY + h * 0.04f)
-            lineTo(w * 0.65f, ecgY)
-            lineTo(w * 0.72f, ecgY)
-        }
         drawPath(
-            ecgPath,
-            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f),
-            style = Stroke(width = 2f)
+            heartPath,
+            color = tint,
+            style = Stroke(
+                width = 1.9.dp.toPx(),
+                cap = StrokeCap.Round,
+                join = StrokeJoin.Round
+            )
         )
+        val playPath = Path().apply {
+            moveTo(w * 0.435f, h * 0.40f)
+            lineTo(w * 0.435f, h * 0.60f)
+            lineTo(w * 0.60f, h * 0.50f)
+            close()
+        }
+        drawPath(playPath, tint)
     }
 }
 

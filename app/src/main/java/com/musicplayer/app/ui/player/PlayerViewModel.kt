@@ -16,12 +16,14 @@ import com.musicplayer.app.domain.model.LyricsCandidate
 import com.musicplayer.app.domain.model.MetadataProvider
 import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
+import com.musicplayer.app.domain.model.Playlist
 import com.musicplayer.app.domain.model.ScrapeCandidates
 import com.musicplayer.app.domain.model.ScrapeSearchMode
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.domain.model.SongCategoryTags
 import com.musicplayer.app.domain.model.TrackMetadataCandidate
 import com.musicplayer.app.domain.repository.MusicRepository
+import com.musicplayer.app.domain.repository.PlaylistRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
 import com.musicplayer.app.domain.usecase.CollectScrapeCandidatesUseCase
 import com.musicplayer.app.domain.usecase.AiGenerateSongCategoryResult
@@ -29,6 +31,7 @@ import com.musicplayer.app.domain.usecase.AiGenerateSongCategoryUseCase
 import com.musicplayer.app.domain.usecase.AiMetadataScrapeResult
 import com.musicplayer.app.domain.usecase.AiScrapeMetadataUseCase
 import com.musicplayer.app.domain.usecase.FetchMetadataUseCase
+import com.musicplayer.app.domain.usecase.ManagePlaylistUseCase
 import com.musicplayer.app.domain.usecase.PlayMusicUseCase
 import com.musicplayer.app.playback.EqualizerController
 import com.musicplayer.app.playback.MusicPlaybackService
@@ -108,11 +111,15 @@ class PlayerViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val aiScrapeMetadataUseCase: AiScrapeMetadataUseCase,
     private val aiGenerateSongCategoryUseCase: AiGenerateSongCategoryUseCase,
+    private val playlistRepository: PlaylistRepository,
+    private val managePlaylistUseCase: ManagePlaylistUseCase,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     val playbackState: StateFlow<PlaybackState> = playMusicUseCase.observePlayback()
     val desktopLyricsEnabled: StateFlow<Boolean> = settingsRepository.desktopLyricsEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val playlists: StateFlow<List<Playlist>> = playlistRepository.observePlaylists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val lyricOffsetPrefs =
         context.getSharedPreferences("lyric_offsets", Context.MODE_PRIVATE)
@@ -263,6 +270,21 @@ class PlayerViewModel @Inject constructor(
 
     fun toggleDesktopLyrics() {
         context.startService(MusicPlaybackService.toggleDesktopLyricsIntent(context))
+    }
+
+    fun addCurrentSongToPlaylist(playlistId: String) {
+        val songId = playbackState.value.currentSong?.id ?: return
+        viewModelScope.launch {
+            managePlaylistUseCase.addSong(playlistId, songId)
+        }
+    }
+
+    fun createPlaylistForCurrentSong() {
+        val songId = playbackState.value.currentSong?.id ?: return
+        viewModelScope.launch {
+            val playlist = managePlaylistUseCase.create("New Mix")
+            managePlaylistUseCase.addSong(playlist.id, songId)
+        }
     }
 
     fun seekTo(positionMs: Long) {
