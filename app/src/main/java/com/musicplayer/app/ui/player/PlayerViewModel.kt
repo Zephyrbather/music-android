@@ -201,18 +201,23 @@ class PlayerViewModel @Inject constructor(
     )
     val controlsState: StateFlow<PlayerControlsState> = controls
     private var latestSongCategoryById: Map<String, String?> = emptyMap()
+    private var lastAdaptivePresetId: String? = null
 
     init {
         viewModelScope.launch {
             settingsRepository.adaptiveEqualizerEnabled.collect { enabled ->
                 controls.update { it.copy(adaptiveEqualizerEnabled = enabled) }
+                lastAdaptivePresetId = null
                 if (enabled) applyAdaptiveEqualizer()
             }
         }
         viewModelScope.launch {
             settingsRepository.equalizerCategoryPresets.collect { mappings ->
                 controls.update { it.copy(categoryPresetMap = mappings) }
-                if (controls.value.adaptiveEqualizerEnabled) applyAdaptiveEqualizer()
+                if (controls.value.adaptiveEqualizerEnabled) {
+                    lastAdaptivePresetId = null
+                    applyAdaptiveEqualizer()
+                }
             }
         }
         viewModelScope.launch {
@@ -229,6 +234,7 @@ class PlayerViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect {
                     controls.update { state -> state.copy(categoryStatus = null) }
+                    lastAdaptivePresetId = null
                     applyAdaptiveEqualizer()
                 }
         }
@@ -348,12 +354,16 @@ class PlayerViewModel @Inject constructor(
     private fun applyAdaptiveEqualizer(categoryTag: String? = currentSongCategoryTag()) {
         val state = controls.value
         if (!state.adaptiveEqualizerEnabled) return
-        val category = SongCategoryTags.normalize(categoryTag) ?: return
-        val presetId = state.categoryPresetMap[category] ?: SongCategoryTags.defaultPresetByCategory[category] ?: "flat"
+        val category = SongCategoryTags.normalize(categoryTag)
+        val presetId = category?.let {
+            state.categoryPresetMap[it] ?: SongCategoryTags.defaultPresetByCategory[it]
+        } ?: "flat"
         val preset = state.presets.firstOrNull { it.id == presetId }
-            ?: state.presets.firstOrNull()
+            ?: state.presets.firstOrNull { it.id == "flat" }
             ?: return
-        applyPreset(preset)
+        if (preset.id == lastAdaptivePresetId) return
+        lastAdaptivePresetId = preset.id
+        applyPreset(preset, rampMs = 240L)
     }
 
     private fun currentSongCategoryTag(): String? {
@@ -361,13 +371,13 @@ class PlayerViewModel @Inject constructor(
         return latestSongCategoryById[song.id] ?: song.categoryTag
     }
 
-    private fun applyPreset(preset: EqualizerPreset) {
+    private fun applyPreset(preset: EqualizerPreset, rampMs: Long = 0L) {
         val bandCount = controls.value.bandLevels.size
         val levels = preset.bandLevels.let { presetLevels ->
             if (presetLevels.size == bandCount) presetLevels
             else List(bandCount) { i -> presetLevels.getOrElse(i) { 0f } }
         }
-        equalizerController.setBandLevels(levels.map { it.toEqualizerBandLevel() })
+        equalizerController.setBandLevels(levels.map { it.toEqualizerBandLevel() }, rampMs)
         controls.update { state ->
             state.copy(
                 selectedPresetId = preset.id,
