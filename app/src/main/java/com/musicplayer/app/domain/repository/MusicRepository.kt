@@ -5,6 +5,7 @@ import com.musicplayer.app.domain.model.Artist
 import com.musicplayer.app.domain.model.MetadataProvider
 import com.musicplayer.app.domain.model.ScrapeSearchMode
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.domain.model.SongMetadataRepair
 import kotlinx.coroutines.flow.Flow
 
 interface MusicRepository {
@@ -41,4 +42,5 @@ interface MusicRepository {
     )
     suspend fun updateSongCategory(songId: String, categoryTag: String?): Song?
     suspend fun updateSongSemanticTags(songId: String, tags: List<String>): Song?
+    suspend fun applyMetadataRepairs(repairs: List<SongMetadataRepair>)
 }

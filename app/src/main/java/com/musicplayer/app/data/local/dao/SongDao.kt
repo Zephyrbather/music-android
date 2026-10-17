@@ -46,6 +46,19 @@ interface SongDao {
         artworkProvider: String?
     )
 
+    @Query(
+        "UPDATE songs SET title = :title, artistName = :artistName, albumTitle = :albumTitle, " +
+            "artistId = :artistId, albumId = :albumId WHERE id = :songId"
+    )
+    suspend fun repairMetadata(
+        songId: String,
+        title: String,
+        artistName: String,
+        albumTitle: String,
+        artistId: String?,
+        albumId: String?
+    )
+
     @Query("UPDATE songs SET categoryTag = :categoryTag WHERE id = :songId")
     suspend fun updateCategory(songId: String, categoryTag: String?)
 

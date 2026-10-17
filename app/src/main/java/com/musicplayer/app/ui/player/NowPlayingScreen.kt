@@ -10,8 +10,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -116,6 +117,7 @@ import com.musicplayer.app.domain.model.PlaybackMode
 import com.musicplayer.app.domain.model.PlaybackState
 import com.musicplayer.app.domain.model.Song
 import com.musicplayer.app.ui.adaptive.LocalPadLayout
+import com.musicplayer.app.ui.components.LyricPosterDialog
 import com.musicplayer.app.ui.components.SongArtwork
 import com.musicplayer.app.ui.i18n.LocalExtraStrings
 import com.musicplayer.app.ui.i18n.LocalKaraokeStrings
@@ -124,6 +126,12 @@ import androidx.core.content.ContextCompat
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+
+private data class LyricPosterRequest(
+    val song: Song,
+    val lines: List<String>,
+    val highlightIndex: Int
+)
 
 @Composable
 fun NowPlayingScreen(
@@ -159,6 +167,19 @@ fun NowPlayingScreen(
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var lyricsMode by rememberSaveable(song?.id) { mutableStateOf(false) }
     var karaokeMode by rememberSaveable(song?.id) { mutableStateOf(false) }
+    var posterRequest by remember { mutableStateOf<LyricPosterRequest?>(null) }
+    val openPoster: (List<String>, Int) -> Unit = { lines, index ->
+        song?.let { posterRequest = LyricPosterRequest(it, lines, index) }
+    }
+
+    posterRequest?.let { request ->
+        LyricPosterDialog(
+            song = request.song,
+            lines = request.lines,
+            highlightIndex = request.highlightIndex,
+            onDismiss = { posterRequest = null }
+        )
+    }
 
     if (karaokeMode) {
         KaraokeMode(
@@ -185,6 +206,7 @@ fun NowPlayingScreen(
             onAdjustLyricOffset = onAdjustLyricOffset,
             onResetLyricOffset = onResetLyricOffset,
             onPlaybackModeChange = onPlaybackModeChange,
+            onOpenPoster = openPoster,
             onExit = { lyricsMode = false },
             modifier = modifier
         )
@@ -208,6 +230,7 @@ fun NowPlayingScreen(
             lyricOffsetMs = lyricOffsetMs,
             onAdjustLyricOffset = onAdjustLyricOffset,
             onResetLyricOffset = onResetLyricOffset,
+            onOpenPoster = openPoster,
             modifier = modifier
         )
     } else {
@@ -383,6 +406,7 @@ private fun PadNowPlayingContent(
     lyricOffsetMs: Long,
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
+    onOpenPoster: (List<String>, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
@@ -488,6 +512,7 @@ private fun PadNowPlayingContent(
                 lyricOffsetMs = lyricOffsetMs,
                 onAdjustLyricOffset = onAdjustLyricOffset,
                 onResetLyricOffset = onResetLyricOffset,
+                onOpenPoster = onOpenPoster,
                 modifier = Modifier
                     .weight(0.9f)
                     .fillMaxHeight()
@@ -507,6 +532,7 @@ private fun PadNowPlayingContent(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PadLyricsPanel(
     song: Song?,
@@ -515,6 +541,7 @@ private fun PadLyricsPanel(
     lyricOffsetMs: Long,
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
+    onOpenPoster: (List<String>, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
@@ -561,7 +588,14 @@ private fun PadLyricsPanel(
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onSeekTo((line.timeMs + lyricOffsetMs).coerceAtLeast(0L)) }
+                                    .combinedClickable(
+                                        onClick = {
+                                            onSeekTo((line.timeMs + lyricOffsetMs).coerceAtLeast(0L))
+                                        },
+                                        onLongClick = {
+                                            onOpenPoster(timedLines.map { it.text }, index)
+                                        }
+                                    )
                             )
                         }
                     }
@@ -576,7 +610,18 @@ private fun PadLyricsPanel(
                             Text(
                                 text = song?.lyrics.orEmpty(),
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        val lyricLines = song?.lyrics.orEmpty()
+                                            .lineSequence()
+                                            .map { it.trim() }
+                                            .filter { it.isNotEmpty() }
+                                            .toList()
+                                        onOpenPoster(lyricLines, 0)
+                                    }
+                                )
                             )
                         }
                     }
@@ -1283,6 +1328,7 @@ private fun CandidateDialog(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LyricsMode(
     playbackState: PlaybackState,
@@ -1296,6 +1342,7 @@ private fun LyricsMode(
     onAdjustLyricOffset: (Long) -> Unit,
     onResetLyricOffset: () -> Unit,
     onPlaybackModeChange: (PlaybackMode) -> Unit,
+    onOpenPoster: (List<String>, Int) -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1382,6 +1429,9 @@ private fun LyricsMode(
                                     detectTapGestures(
                                         onDoubleTap = {
                                             onSeekTo((line.timeMs + lyricOffsetMs).coerceAtLeast(0L))
+                                        },
+                                        onLongPress = {
+                                            onOpenPoster(timedLines.map { it.text }, index)
                                         }
                                     )
                                 }

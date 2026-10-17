@@ -15,9 +15,14 @@ import com.musicplayer.app.domain.model.Artist
 import com.musicplayer.app.domain.model.MetadataProvider
 import com.musicplayer.app.domain.model.ScrapeSearchMode
 import com.musicplayer.app.domain.model.Song
+import com.musicplayer.app.domain.model.SongMetadataRepair
 import com.musicplayer.app.domain.model.albumGroupingId
 import com.musicplayer.app.domain.model.artistGroupingId
+import com.musicplayer.app.domain.model.hasInvalidMetadataText
 import com.musicplayer.app.domain.model.hasUnresolvedAlbumTitle
+import com.musicplayer.app.domain.model.isUnresolvedAlbumTitle
+import com.musicplayer.app.domain.model.looksLikeUuid
+import com.musicplayer.app.domain.model.stableMusicId
 import com.musicplayer.app.domain.repository.MusicRepository
 import com.musicplayer.app.domain.repository.PlaylistRepository
 import com.musicplayer.app.domain.repository.SettingsRepository
@@ -65,11 +70,13 @@ class MusicRepositoryImpl @Inject constructor(
             .mapNotNull { song -> songDao.getSong(song.id)?.toDomain() }
             .associateBy { it.id }
         val mergedSongs = songs.map { song ->
-            if (song.categoryTag.isNullOrBlank()) {
-                song.copy(categoryTag = existingById[song.id]?.categoryTag)
+            val existing = existingById[song.id]
+            val tagged = if (song.categoryTag.isNullOrBlank()) {
+                song.copy(categoryTag = existing?.categoryTag)
             } else {
                 song
             }
+            existing?.let { tagged.guardAgainstRescanRegression(it) } ?: tagged
         }
         songDao.upsertAll(mergedSongs.map { it.toEntity() })
         if (rebuildLibraryArtwork) {
@@ -214,6 +221,21 @@ class MusicRepositoryImpl @Inject constructor(
         rebuildLibraryArtwork(fetchArtistArtwork = false)
     }
 
+    override suspend fun applyMetadataRepairs(repairs: List<SongMetadataRepair>) {
+        if (repairs.isEmpty()) return
+        repairs.forEach { repair ->
+            songDao.repairMetadata(
+                songId = repair.songId,
+                title = repair.title,
+                artistName = repair.artistName,
+                albumTitle = repair.albumTitle,
+                artistId = repair.artistId(),
+                albumId = repair.albumId()
+            )
+        }
+        rebuildLibraryArtwork(fetchArtistArtwork = false)
+    }
+
     override suspend fun updateSongCategory(songId: String, categoryTag: String?): Song? {
         val normalized = categoryTag?.trim()?.takeIf { it.isNotBlank() }
         songDao.updateCategory(songId, normalized)
@@ -246,6 +268,34 @@ private fun songKey(song: com.musicplayer.app.data.local.entity.SongEntity) =
 
 private fun songKey(song: Song) =
     "${song.artistName}|${song.albumTitle}|${song.title}|${song.durationMs}"
+
+private fun Song.guardAgainstRescanRegression(existing: Song): Song {
+    var guarded = this
+    val swappedNames = !existing.title.equals(existing.artistName, ignoreCase = true) &&
+        guarded.title.equals(existing.artistName, ignoreCase = true) &&
+        guarded.artistName.equals(existing.title, ignoreCase = true)
+    if (swappedNames) {
+        guarded = guarded.copy(
+            title = existing.title,
+            artistName = existing.artistName,
+            artistId = existing.artistId
+        )
+    }
+    if (guarded.title.hasInvalidMetadataText() && !existing.title.hasInvalidMetadataText()) {
+        guarded = guarded.copy(title = existing.title)
+    }
+    if (guarded.artistName.hasInvalidMetadataText() && !existing.artistName.hasInvalidMetadataText()) {
+        guarded = guarded.copy(artistName = existing.artistName, artistId = existing.artistId)
+    }
+    val brokenIncomingAlbum =
+        guarded.albumTitle.looksLikeUuid() || guarded.albumTitle.isUnresolvedAlbumTitle()
+    val cleanExistingAlbum =
+        !existing.albumTitle.looksLikeUuid() && !existing.albumTitle.isUnresolvedAlbumTitle()
+    if (brokenIncomingAlbum && cleanExistingAlbum) {
+        guarded = guarded.copy(albumTitle = existing.albumTitle, albumId = existing.albumId)
+    }
+    return guarded
+}
 
 private fun Song.missingScrapeMode(): ScrapeSearchMode? {
     val missingLyrics = lyrics.isNullOrBlank()

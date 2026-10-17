@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Search
@@ -87,9 +88,11 @@ fun SettingsScreen(
     onNavigateToCache: () -> Unit = {},
     onNavigateToDataManagement: () -> Unit = {},
     onNavigateToWebDav: () -> Unit = {},
+    onNavigateToMetadataHealth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
+    val extra = LocalExtraStrings.current
     SettingsPage(
         title = strings.settings,
         onBack = null,
@@ -117,6 +120,14 @@ fun SettingsScreen(
                 description = strings.scrapingDesc,
                 icon = Icons.Outlined.Search,
                 onClick = onNavigateToScraping
+            )
+        }
+        item {
+            SettingsCategoryRow(
+                title = extra.metadataHealth,
+                description = extra.metadataHealthDesc,
+                icon = Icons.Outlined.HealthAndSafety,
+                onClick = onNavigateToMetadataHealth
             )
         }
         item {

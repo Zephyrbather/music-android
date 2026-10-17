@@ -88,6 +88,7 @@ import com.musicplayer.app.ui.settings.AiLabSettingsScreen
 import com.musicplayer.app.ui.settings.CacheSettingsScreen
 import com.musicplayer.app.ui.settings.DataManagementSettingsScreen
 import com.musicplayer.app.ui.settings.LocalLibrarySettingsScreen
+import com.musicplayer.app.ui.settings.MetadataHealthScreen
 import com.musicplayer.app.ui.settings.ScrapingSettingsScreen
 import com.musicplayer.app.ui.settings.SettingsScreen
 import com.musicplayer.app.ui.settings.SettingsViewModel
@@ -121,6 +122,7 @@ private const val SETTINGS_MAIN_ROUTE = "settings/main"
 private const val SETTINGS_APPEARANCE_ROUTE = "settings/appearance"
 private const val SETTINGS_LOCAL_LIBRARY_ROUTE = "settings/local-library"
 private const val SETTINGS_SCRAPING_ROUTE = "settings/scraping"
+private const val SETTINGS_METADATA_HEALTH_ROUTE = "settings/metadata-health"
 private const val SETTINGS_AI_LAB_ROUTE = "settings/ai-lab"
 private const val SETTINGS_CACHE_ROUTE = "settings/cache"
 private const val SETTINGS_DATA_ROUTE = "settings/data"
@@ -269,6 +271,7 @@ fun AppNavigation() {
                                     onNavigateToAppearance = { navController.navigate(SETTINGS_APPEARANCE_ROUTE) },
                                     onNavigateToLocalLibrary = { navController.navigate(SETTINGS_LOCAL_LIBRARY_ROUTE) },
                                     onNavigateToScraping = { navController.navigate(SETTINGS_SCRAPING_ROUTE) },
+                                    onNavigateToMetadataHealth = { navController.navigate(SETTINGS_METADATA_HEALTH_ROUTE) },
                                     onNavigateToAiLab = { navController.navigate(SETTINGS_AI_LAB_ROUTE) },
                                     onNavigateToCache = { navController.navigate(SETTINGS_CACHE_ROUTE) },
                                     onNavigateToDataManagement = { navController.navigate(SETTINGS_DATA_ROUTE) },
@@ -292,6 +295,9 @@ fun AppNavigation() {
                                     onBack = navController::navigateUp,
                                     viewModel = settingsViewModel
                                 )
+                            }
+                            composable(SETTINGS_METADATA_HEALTH_ROUTE) {
+                                MetadataHealthScreen(onBack = navController::navigateUp)
                             }
                             composable(SETTINGS_AI_LAB_ROUTE) {
                                 AiLabSettingsScreen(
